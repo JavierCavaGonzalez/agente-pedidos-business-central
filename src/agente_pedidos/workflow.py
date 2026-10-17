@@ -1,0 +1,330 @@
+"""El workflow: el grafo que decide quién hace qué.
+
+Es un ``WorkflowBuilder`` de Agent Framework (cap. 6 del libro: pasos tipados, aristas
+condicionales, ejecución determinista, checkpoints). Reparto de papeles:
+
+- Decide el agente (IA): qué cliente y qué artículos nombra el correo (nodo ``interpretar``) y
+  cómo redactar la respuesta (nodo ``redactar``).
+- Decide el código: si el pedido es válido, su importe, si hace falta aprobación y qué ruta
+  sigue (nodo ``validar`` + aristas condicionales). La escritura en el ERP la hace código, no el
+  modelo (nodo ``crear_pedido``).
+- Decide la persona: si se crea o no un pedido que exige aprobación (nodo ``aprobacion_humana``,
+  que detiene el workflow con ``request_info`` y lo reanuda con la decisión, incluso en otro
+  proceso gracias al checkpoint).
+
+Grafo::
+
+    interpretar -> validar -+-> rechazar ----------------+-> redactar -> salida
+                            +-> aprobacion_humana -+-> crear_pedido -+
+                            |                      +-> rechazar      |
+                            +-> crear_pedido ------------------------+
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from agent_framework import (
+    Agent,
+    Case,
+    Default,
+    Executor,
+    FileCheckpointStorage,
+    Workflow,
+    WorkflowBuilder,
+    WorkflowContext,
+    WorkflowViz,
+    handler,
+    register_checkpoint_type,
+    response_handler,
+)
+from typing_extensions import Never
+
+from .agentes import crear_agente_interprete, crear_agente_redactor
+from .bc.base import ClienteBC, ErrorBC
+from .esquemas import DecisionHumana, LineaInterpretada, LineaValidada, PedidoInterpretado, PedidoValidado, ResultadoPedido
+from .observabilidad import ContadorCoste
+from .politicas import Politica, validar_pedido
+
+NOMBRE_WORKFLOW = "pedidos_por_correo"
+
+
+# --- mensajes propios que viajan por el grafo ---------------------------------------------
+
+
+@dataclass
+class SolicitudAprobacion:
+    """Lo que ve la persona que aprueba: calculado por código, no redactado por el modelo."""
+
+    resumen: str
+    total: float
+    numero_cliente: str | None
+    nombre_cliente: str | None
+    motivos: list[str] = field(default_factory=list)
+    pedido_validado: dict[str, Any] = field(default_factory=dict)  # PedidoValidado serializado
+
+
+@dataclass
+class DecisionTomada:
+    pedido_validado: dict[str, Any]
+    aprobado: bool
+    comentario: str = ""
+    aprobador: str = ""
+
+
+# Los checkpoints se guardan en JSON y los objetos propios van serializados; el framework
+# solo los restaura si su tipo está registrado (deserialización restringida, desde la 1.0.1).
+for _tipo in (
+    PedidoInterpretado,
+    LineaInterpretada,
+    PedidoValidado,
+    LineaValidada,
+    DecisionHumana,
+    ResultadoPedido,
+    SolicitudAprobacion,
+    DecisionTomada,
+):
+    register_checkpoint_type(_tipo)
+
+
+# --- nodos (executors) -----------------------------------------------------------------------
+
+
+class Interpretar(Executor):
+    """Nodo con IA: el agente intérprete convierte el correo en un PedidoInterpretado."""
+
+    def __init__(self, agente: Agent, contador: ContadorCoste) -> None:
+        super().__init__(id="interpretar")
+        self.agente = agente
+        self.contador = contador
+
+    @handler
+    async def interpretar(self, correo: str, ctx: WorkflowContext[PedidoInterpretado]) -> None:
+        respuesta = await self.agente.run(correo, options={"response_format": PedidoInterpretado})
+        self.contador.registrar(respuesta)
+        pedido = respuesta.value
+        if pedido is None:  # el modelo no devolvió el formato pedido: nunca se adivina, se marca la duda
+            pedido = _pedido_desde_texto(respuesta.text or "")
+        ctx.set_state("correo", correo)
+        await ctx.send_message(pedido)
+
+
+class Validar(Executor):
+    """Nodo de código: reglas deterministas contra el ERP y la política."""
+
+    def __init__(self, bc: ClienteBC, politica: Politica) -> None:
+        super().__init__(id="validar")
+        self.bc = bc
+        self.politica = politica
+
+    @handler
+    async def validar(self, pedido: PedidoInterpretado, ctx: WorkflowContext[PedidoValidado]) -> None:
+        validado = await validar_pedido(pedido, self.bc, self.politica)
+        await ctx.send_message(validado)
+
+
+class AprobacionHumana(Executor):
+    """Nodo humano: detiene el workflow y espera una DecisionHumana."""
+
+    def __init__(self) -> None:
+        super().__init__(id="aprobacion_humana")
+
+    @handler
+    async def pedir(self, validado: PedidoValidado, ctx: WorkflowContext) -> None:
+        solicitud = SolicitudAprobacion(
+            resumen=validado.resumen_para_humano(),
+            total=validado.total,
+            numero_cliente=validado.numero_cliente,
+            nombre_cliente=validado.nombre_cliente,
+            motivos=list(validado.motivos_aprobacion),
+            pedido_validado=validado.model_dump(),
+        )
+        await ctx.request_info(solicitud, DecisionHumana)
+
+    @response_handler
+    async def recibir(self, solicitud: SolicitudAprobacion, decision: DecisionHumana, ctx: WorkflowContext[DecisionTomada]) -> None:
+        await ctx.send_message(
+            DecisionTomada(
+                pedido_validado=solicitud.pedido_validado,
+                aprobado=decision.aprobado,
+                comentario=decision.comentario,
+                aprobador=decision.aprobador,
+            )
+        )
+
+
+class CrearPedido(Executor):
+    """Nodo de código: la única escritura en el ERP, con la identidad y permisos de la aplicación."""
+
+    def __init__(self, bc: ClienteBC) -> None:
+        super().__init__(id="crear_pedido")
+        self.bc = bc
+
+    @handler
+    async def crear_sin_aprobacion(self, validado: PedidoValidado, ctx: WorkflowContext[ResultadoPedido]) -> None:
+        await ctx.send_message(await self._crear(validado, comentario="Creado automáticamente (dentro de la política)"))
+
+    @handler
+    async def crear_aprobado(self, decision: DecisionTomada, ctx: WorkflowContext[ResultadoPedido]) -> None:
+        validado = PedidoValidado.model_validate(decision.pedido_validado)
+        comentario = f"Aprobado por {decision.aprobador or 'una persona'}" + (f": {decision.comentario}" if decision.comentario else "")
+        await ctx.send_message(await self._crear(validado, comentario=comentario))
+
+    async def _crear(self, validado: PedidoValidado, comentario: str) -> ResultadoPedido:
+        lineas = [{"numero_articulo": l.numero_articulo, "cantidad": l.cantidad} for l in validado.lineas]
+        try:
+            pedido = await self.bc.crear_pedido_venta(
+                validado.numero_cliente or "",
+                lineas,
+                referencia_externa=validado.referencia_cliente or "",
+                fecha_entrega=validado.fecha_entrega,
+            )
+        except ErrorBC as error:
+            return ResultadoPedido(
+                creado=False,
+                total=validado.total,
+                numero_cliente=validado.numero_cliente,
+                nombre_cliente=validado.nombre_cliente,
+                mensaje=f"Business Central rechazó el pedido: {error}",
+            )
+        return ResultadoPedido(
+            creado=True,
+            numero_pedido=pedido["number"],
+            total=float(pedido.get("totalAmountExcludingTax", validado.total)),
+            numero_cliente=pedido.get("customerNumber", validado.numero_cliente),
+            nombre_cliente=pedido.get("customerName", validado.nombre_cliente),
+            mensaje=f"Pedido {pedido['number']} creado. {comentario}. Líneas: " + "; ".join(f"{l.cantidad:g} x {l.numero_articulo} {l.descripcion}" for l in validado.lineas),
+        )
+
+
+class Rechazar(Executor):
+    """Nodo de código: no se crea nada; se explica por qué."""
+
+    def __init__(self) -> None:
+        super().__init__(id="rechazar")
+
+    @handler
+    async def por_validacion(self, validado: PedidoValidado, ctx: WorkflowContext[ResultadoPedido]) -> None:
+        motivos = validado.errores or ["El pedido no cumple la política"]
+        await ctx.send_message(
+            ResultadoPedido(
+                creado=False,
+                total=validado.total,
+                numero_cliente=validado.numero_cliente,
+                nombre_cliente=validado.nombre_cliente,
+                mensaje="Pedido rechazado por validación: " + "; ".join(motivos),
+            )
+        )
+
+    @handler
+    async def por_persona(self, decision: DecisionTomada, ctx: WorkflowContext[ResultadoPedido]) -> None:
+        validado = PedidoValidado.model_validate(decision.pedido_validado)
+        await ctx.send_message(
+            ResultadoPedido(
+                creado=False,
+                total=validado.total,
+                numero_cliente=validado.numero_cliente,
+                nombre_cliente=validado.nombre_cliente,
+                mensaje=f"Pedido rechazado por {decision.aprobador or 'una persona'}" + (f": {decision.comentario}" if decision.comentario else ""),
+            )
+        )
+
+
+class Redactar(Executor):
+    """Nodo con IA: el redactor escribe la respuesta al cliente y el workflow emite la salida."""
+
+    def __init__(self, agente: Agent, contador: ContadorCoste) -> None:
+        super().__init__(id="redactar")
+        self.agente = agente
+        self.contador = contador
+
+    @handler
+    async def redactar(self, resultado: ResultadoPedido, ctx: WorkflowContext[Never, ResultadoPedido]) -> None:
+        resumen = (
+            f"Resultado: {'pedido creado' if resultado.creado else 'no se ha creado el pedido'}\n"
+            f"Número de pedido: {resultado.numero_pedido or '-'}\n"
+            f"Cliente: {resultado.numero_cliente or '-'} {resultado.nombre_cliente or ''}\n"
+            f"Total sin impuestos: {resultado.total:.2f}\n"
+            f"Detalle: {resultado.mensaje}"
+        )
+        respuesta = await self.agente.run(resumen)
+        self.contador.registrar(respuesta)
+        resultado.respuesta_cliente = respuesta.text or ""
+        await ctx.yield_output(resultado)
+
+
+# --- construcción ----------------------------------------------------------------------------
+
+
+@dataclass
+class PiezasWorkflow:
+    workflow: Workflow
+    contador: ContadorCoste
+    storage: FileCheckpointStorage | None
+
+
+def construir_workflow(
+    bc: ClienteBC,
+    politica: Politica | None = None,
+    storage: FileCheckpointStorage | None = None,
+    middleware: list[Any] | None = None,
+    cliente_modelo_interprete: Any | None = None,
+    cliente_modelo_redactor: Any | None = None,
+) -> PiezasWorkflow:
+    """Monta el grafo. Devuelve el workflow, el contador de coste y el almacén de checkpoints."""
+    politica = politica or Politica()
+    contador = ContadorCoste()
+    middleware = middleware or []
+
+    interpretar = Interpretar(crear_agente_interprete(bc, middleware, cliente_modelo_interprete), contador)
+    validar = Validar(bc, politica)
+    aprobacion = AprobacionHumana()
+    crear = CrearPedido(bc)
+    rechazar = Rechazar()
+    redactar = Redactar(crear_agente_redactor(middleware, cliente_modelo_redactor), contador)
+
+    constructor = WorkflowBuilder(
+        name=NOMBRE_WORKFLOW,
+        description="Pedidos de venta por correo con validación por código y aprobación humana",
+        start_executor=interpretar,
+        checkpoint_storage=storage,
+    )
+    constructor.add_edge(interpretar, validar)
+    constructor.add_switch_case_edge_group(
+        validar,
+        [
+            Case(condition=lambda v: not v.apto_para_crear, target=rechazar),
+            Case(condition=lambda v: v.requiere_aprobacion, target=aprobacion),
+            Default(target=crear),
+        ],
+    )
+    constructor.add_edge(aprobacion, crear, condition=lambda d: d.aprobado)
+    constructor.add_edge(aprobacion, rechazar, condition=lambda d: not d.aprobado)
+    constructor.add_edge(crear, redactar)
+    constructor.add_edge(rechazar, redactar)
+    return PiezasWorkflow(workflow=constructor.build(), contador=contador, storage=storage)
+
+
+def crear_storage(ruta: str | Path | None = None) -> FileCheckpointStorage:
+    """Checkpoints en disco: permiten reanudar una aprobación horas después y en otro proceso."""
+    carpeta = Path(ruta or "checkpoints")
+    carpeta.mkdir(parents=True, exist_ok=True)
+    return FileCheckpointStorage(storage_path=carpeta)
+
+
+def dibujar_mermaid(workflow: Workflow) -> str:
+    return WorkflowViz(workflow).to_mermaid()
+
+
+def _pedido_desde_texto(texto: str) -> PedidoInterpretado:
+    try:
+        return PedidoInterpretado.model_validate(json.loads(texto))
+    except Exception:  # noqa: BLE001 - cualquier fallo de formato se convierte en una duda explícita
+        return PedidoInterpretado(
+            cliente_texto="",
+            dudas=["El intérprete no devolvió un pedido con el formato esperado; revisar a mano."],
+            resumen="Petición no interpretada",
+        )

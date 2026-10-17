@@ -1,0 +1,132 @@
+
+==============================================================================
+Procesando ejemplos/correos/01_pedido_pequeno.txt (modelo=simulado, BC=demo)
+  paso: interpretar
+  paso: validar
+  paso: crear_pedido
+  paso: redactar
+
+--- Resultado ---
+Pedido creado: sí
+Número de pedido: S-ORD101001
+Cliente: 40000 Alpine Ski House
+Total sin impuestos: 559.00
+Detalle: Pedido S-ORD101001 creado. Creado automáticamente (dentro de la política). Líneas: 10 x 1928-S AMSTERDAM Lamp
+
+--- Respuesta propuesta al cliente ---
+Estimado cliente:
+
+Hemos registrado su pedido con los datos indicados a continuación. Les avisaremos en cuanto salga del almacén.
+
+Resultado: pedido creado
+Número de pedido: S-ORD101001
+Cliente: 40000 Alpine Ski House
+Total sin impuestos: 559.00
+Detalle: Pedido S-ORD101001 creado. Creado automáticamente (dentro de la política). Líneas: 10 x 1928-S AMSTERDAM Lamp
+
+Un saludo,
+Departamento comercial
+
+Coste: 2 respuesta(s) de agente, 438 tokens de entrada, 251 de salida, coste estimado 0.0029 €
+Auditoría de herramientas: auditoria.jsonl
+
+==============================================================================
+Procesando ejemplos/correos/02_pedido_grande.txt (modelo=simulado, BC=demo)
+  paso: interpretar
+  paso: validar
+  paso: aprobacion_humana
+
+=== APROBACIÓN NECESARIA ===
+Cliente: 10000 Adatum Corporation
+  - 20 x 1900-S PARIS Guest Chair, black a 193.70 = 3874.00 (existencias: 40)
+  - 2 x 1896-S ATHENS Desk a 1000.80 = 2001.60 (existencias: 12)
+Total sin impuestos: 5875.60
+Entrega solicitada: 2026-11-30
+Motivos por los que se pide aprobación: El importe 5875.60 supera el umbral de 3000.00
+  paso: aprobacion_humana
+  paso: crear_pedido
+  paso: redactar
+
+--- Resultado ---
+Pedido creado: sí
+Número de pedido: S-ORD101002
+Cliente: 10000 Adatum Corporation
+Total sin impuestos: 5875.60
+Detalle: Pedido S-ORD101002 creado. Aprobado por demo: aprobación automática desde la línea de comandos. Líneas: 20 x 1900-S PARIS Guest Chair, black; 2 x 1896-S ATHENS Desk
+
+--- Respuesta propuesta al cliente ---
+Estimado cliente:
+
+Hemos registrado su pedido con los datos indicados a continuación. Les avisaremos en cuanto salga del almacén.
+
+Resultado: pedido creado
+Número de pedido: S-ORD101002
+Cliente: 10000 Adatum Corporation
+Total sin impuestos: 5875.60
+Detalle: Pedido S-ORD101002 creado. Aprobado por demo: aprobación automática desde la línea de comandos. Líneas: 20 x 1900-S PARIS Guest Chair, black; 2 x 1896-S ATHENS Desk
+
+Un saludo,
+Departamento comercial
+
+Coste: 2 respuesta(s) de agente, 618 tokens de entrada, 328 de salida, coste estimado 0.0039 €
+Auditoría de herramientas: auditoria.jsonl
+
+==============================================================================
+Procesando ejemplos/correos/03_cliente_bloqueado.txt (modelo=simulado, BC=demo)
+  paso: interpretar
+  paso: validar
+  paso: rechazar
+  paso: redactar
+
+--- Resultado ---
+Pedido creado: no
+Cliente: 50000 Relecloud
+Total sin impuestos: 968.50
+Detalle: Pedido rechazado por validación: El cliente 50000 está bloqueado (All)
+
+--- Respuesta propuesta al cliente ---
+Estimado cliente:
+
+Lamentablemente no hemos podido tramitar su pedido por los motivos que se indican a continuación. Quedamos a su disposición para resolverlo.
+
+Resultado: no se ha creado el pedido
+Número de pedido: -
+Cliente: 50000 Relecloud
+Total sin impuestos: 968.50
+Detalle: Pedido rechazado por validación: El cliente 50000 está bloqueado (All)
+
+Un saludo,
+Departamento comercial
+
+Coste: 2 respuesta(s) de agente, 346 tokens de entrada, 236 de salida, coste estimado 0.0026 €
+Auditoría de herramientas: auditoria.jsonl
+
+==============================================================================
+Procesando ejemplos/correos/04_con_dudas.txt (modelo=simulado, BC=demo)
+  paso: interpretar
+  paso: validar
+  paso: rechazar
+  paso: redactar
+
+--- Resultado ---
+Pedido creado: no
+Cliente: 20000 Trey Research
+Total sin impuestos: 0.00
+Detalle: Pedido rechazado por validación: Línea '3 sillas giratorias': artículo no identificado
+
+--- Respuesta propuesta al cliente ---
+Estimado cliente:
+
+Lamentablemente no hemos podido tramitar su pedido por los motivos que se indican a continuación. Quedamos a su disposición para resolverlo.
+
+Resultado: no se ha creado el pedido
+Número de pedido: -
+Cliente: 20000 Trey Research
+Total sin impuestos: 0.00
+Detalle: Pedido rechazado por validación: Línea '3 sillas giratorias': artículo no identificado
+
+Un saludo,
+Departamento comercial
+
+Coste: 2 respuesta(s) de agente, 371 tokens de entrada, 291 de salida, coste estimado 0.0031 €
+Auditoría de herramientas: auditoria.jsonl

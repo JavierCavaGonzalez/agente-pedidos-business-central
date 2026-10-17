@@ -1,0 +1,15 @@
+# Verificado el 17-10-2026 con Python 3.13. Fija la versión del framework: su API cambia cada semana.
+agent-framework==1.22.0
+httpx>=0.28,<1
+pydantic>=2.10,<3
+typing_extensions>=4.12
+
+# Opcionales (descomenta lo que uses)
+# azure-identity>=1.21            # MODELO_PROVEEDOR=foundry o azure_openai sin clave
+# azure-monitor-opentelemetry>=1.8 # trazas a Application Insights
+# mcp>=1.20                        # servidor MCP de ejemplo (src/agente_pedidos/mcp_server.py)
+# agent-framework-devui            # interfaz de pruebas DevUI (beta)
+
+# Pruebas
+pytest>=8
+pytest-asyncio>=0.25

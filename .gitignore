@@ -1,0 +1,26 @@
+# Credenciales y configuración local
+.env
+*.local
+
+# Datos generados por el agente
+checkpoints/
+checkpoints-devui/
+auditoria*.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+
+# Editores
+.vscode/
+.idea/
+*.swp
+.DS_Store

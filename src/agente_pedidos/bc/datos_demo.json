@@ -1,0 +1,25 @@
+{
+  "empresa": {"id": "demo-company-0001", "name": "CRONUS España S.A. (demo)"},
+  "clientes": [
+    {"id": "c-10000", "number": "10000", "displayName": "Adatum Corporation", "email": "robert.townes@contoso.com", "blocked": " ", "creditLimit": 0, "balanceDue": 0, "paymentTermsCode": "30 DIAS"},
+    {"id": "c-20000", "number": "20000", "displayName": "Trey Research", "email": "helen.ray@contoso.com", "blocked": " ", "creditLimit": 25000, "balanceDue": 4250.5, "paymentTermsCode": "14 DIAS"},
+    {"id": "c-30000", "number": "30000", "displayName": "School of Fine Art", "email": "meagan.bond@contoso.com", "blocked": " ", "creditLimit": 10000, "balanceDue": 9100.0, "paymentTermsCode": "30 DIAS"},
+    {"id": "c-40000", "number": "40000", "displayName": "Alpine Ski House", "email": "ian.deberry@contoso.com", "blocked": " ", "creditLimit": 50000, "balanceDue": 1200.0, "paymentTermsCode": "30 DIAS"},
+    {"id": "c-50000", "number": "50000", "displayName": "Relecloud", "email": "jesse.homer@contoso.com", "blocked": "All", "creditLimit": 5000, "balanceDue": 6400.0, "paymentTermsCode": "7 DIAS"}
+  ],
+  "articulos": [
+    {"id": "i-1896-S", "number": "1896-S", "displayName": "ATHENS Desk", "type": "Inventory", "blocked": false, "inventory": 12, "unitPrice": 1000.80, "baseUnitOfMeasureCode": "PCS"},
+    {"id": "i-1900-S", "number": "1900-S", "displayName": "PARIS Guest Chair, black", "type": "Inventory", "blocked": false, "inventory": 40, "unitPrice": 193.70, "baseUnitOfMeasureCode": "PCS"},
+    {"id": "i-1906-S", "number": "1906-S", "displayName": "ATHENS Mobile Pedestal", "type": "Inventory", "blocked": false, "inventory": 8, "unitPrice": 435.80, "baseUnitOfMeasureCode": "PCS"},
+    {"id": "i-1908-S", "number": "1908-S", "displayName": "LONDON Swivel Chair, blue", "type": "Inventory", "blocked": false, "inventory": 25, "unitPrice": 191.00, "baseUnitOfMeasureCode": "PCS"},
+    {"id": "i-1920-S", "number": "1920-S", "displayName": "ANTWERP Conference Table", "type": "Inventory", "blocked": false, "inventory": 3, "unitPrice": 650.30, "baseUnitOfMeasureCode": "PCS"},
+    {"id": "i-1928-S", "number": "1928-S", "displayName": "AMSTERDAM Lamp", "type": "Inventory", "blocked": false, "inventory": 60, "unitPrice": 55.90, "baseUnitOfMeasureCode": "PCS"},
+    {"id": "i-1936-S", "number": "1936-S", "displayName": "BERLIN Guest Chair, yellow", "type": "Inventory", "blocked": false, "inventory": 15, "unitPrice": 193.70, "baseUnitOfMeasureCode": "PCS"},
+    {"id": "i-1960-S", "number": "1960-S", "displayName": "ROME Guest Chair, green", "type": "Inventory", "blocked": false, "inventory": 0, "unitPrice": 193.70, "baseUnitOfMeasureCode": "PCS"},
+    {"id": "i-1964-S", "number": "1964-S", "displayName": "TOKYO Guest Chair, blue", "type": "Inventory", "blocked": false, "inventory": 30, "unitPrice": 193.70, "baseUnitOfMeasureCode": "PCS"},
+    {"id": "i-1968-S", "number": "1968-S", "displayName": "MEXICO Swivel Chair, black", "type": "Inventory", "blocked": false, "inventory": 18, "unitPrice": 191.00, "baseUnitOfMeasureCode": "PCS"},
+    {"id": "i-1972-S", "number": "1972-S", "displayName": "MUNICH Swivel Chair, yellow", "type": "Inventory", "blocked": true, "inventory": 9, "unitPrice": 191.00, "baseUnitOfMeasureCode": "PCS"},
+    {"id": "i-1996-S", "number": "1996-S", "displayName": "ATLANTA Whiteboard, base", "type": "Inventory", "blocked": false, "inventory": 5, "unitPrice": 1397.30, "baseUnitOfMeasureCode": "PCS"}
+  ],
+  "pedidos": []
+}
