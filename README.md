@@ -8,7 +8,7 @@ El objetivo no es el pedido: es enseñar **todas las piezas del esqueleto de un 
 |---|---|---|
 | Qué cliente y qué artículos nombra el correo; cómo redactar la respuesta | Si el pedido es válido (cliente no bloqueado, artículos existentes, existencias, crédito), su importe, si hace falta aprobación y qué ruta sigue; la escritura en el ERP | Si se crea un pedido que exige aprobación (importe, dudas, política) |
 
-Funciona **sin ninguna credencial** en modo demo (modelo simulado + Business Central simulado) y se conecta a un **sandbox real** de Business Central con cuatro variables de entorno.
+Funciona **sin ninguna credencial** en modo demo (modelo simulado + Business Central simulado) y se conecta a un **sandbox real** de Business Central con seis variables de entorno.
 
 > Lenguaje: Python. Framework: `agent-framework==1.22.0`. Todo el código usa la API vigente (`Agent`, `AgentSession`, `@tool`, `WorkflowBuilder`, `request_info`, `FileCheckpointStorage`, `configure_otel_providers`), no la de la beta de 2025 (`ChatAgent`, `AgentThread`, `@ai_function`…). Si usas un asistente de código, fíjale la versión: la API cambia cada semana.
 
@@ -166,7 +166,7 @@ El resto del código no cambia: `modelo.py` devuelve un cliente distinto y el ag
 
 ## 8. Conectar un sandbox de Business Central
 
-El agente entra en Business Central por la **API estándar v2.0** con autenticación **aplicación a aplicación** (OAuth 2.0 client credentials). Así actúa con una identidad propia y permisos mínimos, y el registro de cambios de BC muestra a esa aplicación como autora. (El servidor MCP de Business Central solo admite OAuth delegado, con un usuario presente, por lo que no sirve para un agente desatendido; por eso este ejemplo usa la API.)
+El agente entra en Business Central por la **API estándar v2.0** con autenticación **aplicación a aplicación** (OAuth 2.0 client credentials). Así actúa con una identidad propia y permisos mínimos: Business Central ejecuta esas operaciones con la identidad de la aplicación, no con la de una persona. (El servidor MCP de Business Central solo admite OAuth delegado, con un usuario presente, por lo que no sirve para un agente desatendido; por eso este ejemplo usa la API.)
 
 Pasos (documentación oficial: [Using Service-to-Service Authentication](https://learn.microsoft.com/dynamics365/business-central/dev-itpro/administration/automation-apis-using-s2s-authentication)):
 

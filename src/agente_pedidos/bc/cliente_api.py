@@ -3,7 +3,7 @@
 Flujo de autenticación: *client credentials* (servicio a servicio). La aplicación
 registrada en Microsoft Entra ID se da de alta en Business Central (página
 «Aplicaciones de Microsoft Entra») con los conjuntos de permisos mínimos que necesita el
-agente. Así el ERP registra cada cambio con la identidad de la aplicación, no con la de
+agente. Así el ERP ejecuta cada operación con la identidad de la aplicación, no con la de
 una persona.
 
 Endpoints usados (todos de la API v2.0 estándar, sin extensiones AL):

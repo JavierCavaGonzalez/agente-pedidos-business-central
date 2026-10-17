@@ -61,7 +61,7 @@ sequenceDiagram
     H-->>A: aprobado (misma sesión o checkpoint)
     A->>T: crear_pedido_venta
     T->>BC: POST /salesOrders + líneas
-    BC-->>T: S-ORD101001 (registro de cambios con la app)
+    BC-->>T: S-ORD101002 (registrado con la identidad de la aplicación)
     A-->>U: respuesta + trazas OpenTelemetry de cada paso
 ```
 
