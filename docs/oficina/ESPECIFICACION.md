@@ -110,8 +110,8 @@ Tipografía de píxel (Google Fonts "Press Start 2P" o "VT323") solo en rótulos
 La imagen de referencia no es nuestra y no se copia. Se generan assets propios en el mismo estilo (píxel art isométrico, oficina moderna, paleta azul oscuro con acentos) y se guardan los originales en `ui/static/art/` con un `LICENCIA.md` que diga cómo se crearon.
 
 Orden de trabajo: **primero el sistema con arte provisional, después el arte definitivo.**
-1. Claude Code construye todo con placeholders dibujados en CSS/SVG (mesas como bloques isométricos, personajes como siluetas de color). El sistema funciona de extremo a extremo sin ninguna imagen.
-2. Javier genera el arte con un modelo de imágenes (el que prefiera) usando estos prompts, y guarda los PNG con los nombres indicados; el frontend los usa automáticamente si existen.
+1. Primero construyo todo con placeholders dibujados en CSS/SVG (mesas como bloques isométricos, personajes como siluetas de color). El sistema funciona de extremo a extremo sin ninguna imagen.
+2. Después genero el arte con un modelo de imágenes usando estos prompts, y guardo los PNG con los nombres indicados; el frontend los usa automáticamente si existen.
 
 Prompts de generación (ajustar a gusto, mantener consistencia entre ellos):
 - `oficina.png` (1600×900, sin personajes): "Pixel art isometric modern office floor seen from above, dark navy background, four empty desks with monitors arranged in a 2×2 grid in the centre, a glass-walled manager office in the top-left corner with a desk and a plant, a meeting room with a whiteboard in the top-right corner, a server rack and filing cabinets along the right wall, a large empty wall-mounted status board in the bottom-right corner, clean 16-bit style, crisp pixels, no text, no characters."
@@ -120,7 +120,7 @@ Prompts de generación (ajustar a gusto, mantener consistencia entre ellos):
 
 Si la consistencia entre imágenes generadas no sale bien a la primera, generar una sola escena completa con personajes y recortar los sprites, repitiendo la escena con cada estado.
 
-## 5. Entregables de Claude Code
+## 5. Entregables
 
 Trabajar en la rama `oficina` (no en `main`): el artículo enlaza la etiqueta `v0.1.0` y no debe cambiar.
 

@@ -1,6 +1,6 @@
-# Para construirlo con Claude Code: prompt listo para pegar
+# Para construirlo con un asistente de programación: prompt listo para pegar
 
-Este proyecto se puede regenerar (o adaptar a otro proceso del ERP) pidiéndoselo a un asistente de código. El prompt siguiente está pensado para Claude Code, pero vale para cualquier asistente que pueda ejecutar comandos. Cópialo entero en una carpeta vacía.
+Este proyecto se puede regenerar (o adaptar a otro proceso del ERP) pidiéndoselo a un asistente de programación. El prompt siguiente vale para cualquier asistente que pueda ejecutar comandos. Cópialo entero en una carpeta vacía.
 
 Consejos antes de pegar:
 

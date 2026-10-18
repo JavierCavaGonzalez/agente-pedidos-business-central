@@ -3,7 +3,7 @@
 Sirve para dos cosas:
 1. Mostrar cómo un agente de Agent Framework consume herramientas MCP (``MCPStdioTool``)
    en lugar de funciones locales: ver ``crear_herramienta_mcp()``.
-2. Dejar que otros hosts MCP (VS Code, Claude, Copilot Studio) consulten el ERP simulado.
+2. Dejar que VS Code, Copilot Studio u otros hosts MCP consulten el ERP simulado.
 
 Solo expone lecturas: la escritura se queda fuera a propósito (mínimo privilegio).
 Requiere el paquete ``mcp``:  ``pip install mcp``.

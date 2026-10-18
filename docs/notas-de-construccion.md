@@ -1,6 +1,6 @@
 # Notas de construcción
 
-Cambios hechos después de la primera versión, con el motivo de cada uno. Lo que funciona a la primera no se apunta aquí; lo que falló, sí.
+Cambios hechos después de la primera versión, con el motivo de cada uno. Lo que funciona a la primera no lo apunto aquí; lo que falló, sí.
 
 ## 2026-10-18 · Los comentarios al final de línea en `.env` se colaban en los valores
 
@@ -22,7 +22,7 @@ ValueError: invalid literal for int() with base 10: '12    # tope de llamadas al
 - `AGENTE_SOLO_LECTURA=1   # comentario` daba `"1   # comentario"`, que no es `"1"`: **el modo solo lectura quedaba desactivado** aunque la persona lo hubiera activado. Es justo el control que debe bloquear las escrituras en el ERP.
 - `AGENTE_AUDITORIA` y `AGENTE_CHECKPOINTS` se convertían en rutas con el comentario dentro.
 
-**Por qué no lo detectó la revisión.** El modo demo y las 22 pruebas funcionan **sin `.env`**: toman los valores por defecto del código y nunca pasan por `cargar_entorno()`. El fallo solo aparece cuando alguien copia `.env.example` a `.env` para conectar un modelo real, que es el primer paso fuera de la demo. Ninguna prueba cargaba un `.env`.
+**Por qué no lo detecté al revisarlo.** El modo demo y las 22 pruebas funcionan **sin `.env`**: toman los valores por defecto del código y nunca pasan por `cargar_entorno()`. El fallo solo aparece cuando alguien copia `.env.example` a `.env` para conectar un modelo real, que es el primer paso fuera de la demo. Ninguna prueba cargaba un `.env`.
 
 **Corrección.**
 
@@ -30,8 +30,8 @@ ValueError: invalid literal for int() with base 10: '12    # tope de llamadas al
    - sin comillas, un `#` precedido de espacio empieza un comentario y se descarta (`CLAVE=1   # …` → `1`; `CLAVE=   # …` → vacío);
    - un `#` sin espacio delante se conserva (`CLAVE=abc#def` → `abc#def`);
    - entre comillas simples o dobles se conserva todo, `#` incluido, y se ignora lo que vaya después de la comilla de cierre.
-2. `.env.example`: los comentarios pasan a su propia línea, y se añade una línea que lo pide. Se hace lo mismo con las asignaciones comentadas de observabilidad (`# ENABLE_CONSOLE_EXPORTERS=1   # …`), para que al descomentarlas no reaparezca el problema. Esto también protege a quien cargue el fichero con otras herramientas que no quitan comentarios, como `docker --env-file`.
-3. Se aplicó el mismo cambio al `.env` local (que no está en el repositorio).
+2. `.env.example`: los comentarios pasan a su propia línea, y añado una línea que lo pide. Hago lo mismo con las asignaciones comentadas de observabilidad (`# ENABLE_CONSOLE_EXPORTERS=1   # …`), para que al descomentarlas no reaparezca el problema. Esto también protege a quien cargue el fichero con otras herramientas que no quitan comentarios, como `docker --env-file`.
+3. Apliqué el mismo cambio al `.env` local (que no está en el repositorio).
 4. Prueba nueva `tests/test_entorno.py` (2 casos): carga un `.env` temporal con `AGENTE_SOLO_LECTURA=1   # comentario` y comprueba que `SoloLectura().activo` es `True` y que `PresupuestoLlamadas().maximo` es `12`; además comprueba que se conserva el `#` entre comillas y sin espacio delante. Ambos casos **fallan con el `cli.py` anterior** y pasan con el nuevo. Total: 24 pruebas.
 
 **Lección.** Un control de seguridad configurable (aquí, el solo lectura) necesita una prueba que lo active **por el mismo camino que usará la persona**, no solo construyendo el objeto con `activo=True`.
@@ -40,7 +40,7 @@ ValueError: invalid literal for int() with base 10: '12    # tope de llamadas al
 
 **Síntoma.** Con `gpt-4.1-mini`, tras aprobar `crear_pedido_venta`, el pedido se creaba (S-ORD101001), pero la respuesta final del asistente era un `PedidoInterpretado` en JSON (`numero_cliente`, `lineas`, `referencia_externa`, `dudas`, `resumen`) en lugar de una frase con el número de pedido.
 
-**Primer diagnóstico, equivocado.** Al principio se anotó que `respuesta.text` llegaba vacío. No era así: la CLI sí imprimía el texto, pero el filtro que se usó para ocultar las trazas de OpenTelemetry en la salida (que se saltaba los bloques entre una línea que empieza por `{` y otra que empieza por `}`) ocultaba también ese JSON. Ni el framework ni la CLI tenían ningún fallo. Se descubrió al volver a ejecutar con `ENABLE_SENSITIVE_DATA=1` y leer `gen_ai.output.messages` de la última llamada `chat`, y al mirar la salida en bruto. Lección: para diagnosticar, mirar la salida sin filtrar antes de concluir que algo falta.
+**Primer diagnóstico, equivocado.** Al principio anoté que `respuesta.text` llegaba vacío. No era así: la CLI sí imprimía el texto, pero el filtro que usé para ocultar las trazas de OpenTelemetry en la salida (que se saltaba los bloques entre una línea que empieza por `{` y otra que empieza por `}`) ocultaba también ese JSON. Ni el framework ni la CLI tenían ningún fallo. Lo descubrí al volver a ejecutar con `ENABLE_SENSITIVE_DATA=1` y leer `gen_ai.output.messages` de la última llamada `chat`, y al mirar la salida en bruto. Lección: para diagnosticar, mirar la salida sin filtrar antes de concluir que algo falta.
 
 **Causa (código del ejemplo, no del framework).** `crear_agente_asistente()` construía las instrucciones a partir de `prompts/interprete.md`, que dice «no respondes al cliente» y «Devuelve exclusivamente el objeto estructurado que se te pide». Un modelo real las obedece: tras la herramienta, devuelve el objeto. El párrafo añadido («Modo asistente: …») no decía cómo contestar al final.
 
@@ -60,7 +60,7 @@ ValueError: invalid literal for int() with base 10: '12    # tope de llamadas al
 
 **Causa probable: el prompt nuevo.** `prompts/asistente.md` dice «Es mejor preguntar que suponer» y «si no está claro, pregunta», pero no aclara que la aprobación de `crear_pedido_venta` ya es la confirmación de la persona. El modelo añadió su propia confirmación conversacional antes de la herramienta. Con el prompt anterior (el del intérprete) sí llamaba a la herramienta, pero luego contestaba en JSON.
 
-**Ajuste del prompt.** En `prompts/asistente.md`, el paso 4 dice ahora que, con cliente, artículos y cantidades claros, llame directamente a `crear_pedido_venta` **sin pedir confirmación en el chat**, porque la herramienta se detiene a pedir la aprobación de una persona y esa aprobación ya es la confirmación. La regla «es mejor preguntar que suponer» queda limitada a cuando falta un dato o hay ambigüedad. La prueba con el modelo simulado no puede cubrir esto (el simulado no decide si pregunta o no); se verifica con el modelo real.
+**Ajuste del prompt.** En `prompts/asistente.md`, el paso 4 dice ahora que, con cliente, artículos y cantidades claros, llame directamente a `crear_pedido_venta` **sin pedir confirmación en el chat**, porque la herramienta se detiene a pedir la aprobación de una persona y esa aprobación ya es la confirmación. La regla «es mejor preguntar que suponer» queda limitada a cuando falta un dato o hay ambigüedad. La prueba con el modelo simulado no puede cubrir esto (el simulado no decide si pregunta o no); lo verifico con el modelo real.
 
 **Segunda verificación con el modelo real (2026-10-18): superada.** Mismo comando, `gpt-4.1-mini`:
 
@@ -69,7 +69,7 @@ ValueError: invalid literal for int() with base 10: '12    # tope de llamadas al
 - Responde en texto, no en JSON: «He creado el pedido S-ORD101001 para Adatum Corporation con 5 lámparas AMSTERDAM, por un total sin impuestos de 279.5. Está en estado borrador pendiente de aprobación. ¿Quieres que te ayude con algo más?». Incluye número, cliente, líneas y total.
 - 3 llamadas al modelo (817/53, 941/38 y 1.043/54), 2.801 / 145 tokens, coste estimado 0,0068 €.
 
-**Observación menor (sin corregir).** «Pendiente de aprobación» no es exacto: el pedido ya se ha aprobado; `status: Draft` significa en Business Central que el pedido está abierto y sin lanzar. El modelo interpreta el estado por su cuenta. Si molesta, se puede añadir al prompt que no comente el estado o que explique «borrador = abierto, sin lanzar».
+**Observación menor (sin corregir).** «Pendiente de aprobación» no es exacto: el pedido ya se ha aprobado; `status: Draft` significa en Business Central que el pedido está abierto y sin lanzar. El modelo interpreta el estado por su cuenta. Si molesta, puedo añadir al prompt que no comente el estado o que explique «borrador = abierto, sin lanzar».
 
 ## 2026-10-18 · Aprobación por consola sin terminal
 
@@ -91,7 +91,7 @@ ValueError: invalid literal for int() with base 10: '12    # tope de llamadas al
 
 **Contexto.** Primera ejecución contra un Business Central real (sandbox TEST29, empresa CRONUS ES, `BC_MODO=api`, `AGENTE_SOLO_LECTURA=1`) con `chat "Empresa: Adatum Corporation. Necesito 2 lámparas AMSTERDAM"`.
 
-**Síntoma.** El token de Entra ID y la empresa se obtenían bien, pero `buscar_clientes` y `buscar_articulos` fallaban, y el agente le pedía a la persona que «confirmara el nombre del cliente». Llamando al cliente directamente, sin el modelo, salió el error:
+**Síntoma.** El token de Entra ID y la empresa se obtenían bien, pero `buscar_clientes` y `buscar_articulos` fallaban, y el agente le pedía a la persona que «confirmara el nombre del cliente». Llamé al cliente directamente, sin el modelo, y salió el error:
 
 ```
 Business Central respondió 501: The 'OR' operator is not supported on distinct fields on an OData filter.
@@ -121,7 +121,7 @@ Business Central respondió 501: The 'OR' operator is not supported on distinct 
 
 **Ejecución tras corregir los filtros.** `chat "Empresa: Adatum Corporation. Necesito 2 lámparas AMSTERDAM"` contra TEST29 con `AGENTE_SOLO_LECTURA=1` y `CHAT_APROBAR=si`: token ✅, empresa ✅, cliente ✅ (10000 Adatum Corporation, ya sin 501), artículo ❌ (`buscar_articulos("AMSTERDAM lámpara")` sin resultados) y, por tanto, bloqueo de la escritura sin probar: el agente no llegó a pedir `crear_pedido_venta`. 2 llamadas al modelo, 1.825 / 101 tokens, 0,0045 €. Esta vez la auditoría sí registró las dos lecturas.
 
-**Hallazgo 1: el `contains` de Business Central distingue mayúsculas y tildes, y CRONUS ES tiene los nombres en español.** El artículo 1928-S se llama «Lámpara ÁMSTERDAM». Medido en TEST29 con `contains(displayName,'…')`: «Lámpara» → 1 resultado; «lámpara», «LÁMPARA», «lampara», «Lámparas», «ámsterdam» y «AMSTERDAM» → 0. Los datos de demostración (`datos_demo.json`) usan los nombres del CRONUS en inglés («AMSTERDAM Lamp») y `ClienteDemo` compara sin distinguir mayúsculas, así que la demo no podía mostrarlo.
+**Hallazgo 1: el `contains` de Business Central distingue mayúsculas y tildes, y CRONUS ES tiene los nombres en español.** El artículo 1928-S se llama «Lámpara ÁMSTERDAM». Lo medí en TEST29 con `contains(displayName,'…')`: «Lámpara» → 1 resultado; «lámpara», «LÁMPARA», «lampara», «Lámparas», «ámsterdam» y «AMSTERDAM» → 0. Los datos de demostración (`datos_demo.json`) usan los nombres del CRONUS en inglés («AMSTERDAM Lamp») y `ClienteDemo` compara sin distinguir mayúsculas, así que la demo no podía mostrarlo.
 
 **Corrección.** `buscar_articulos` en `cliente_api.py`:
 
@@ -133,7 +133,7 @@ Las tildes no se pueden adivinar desde el código (una búsqueda de solo «AMSTE
 
 **Hallazgo 2: `blocked` de un cliente no bloqueado llega como `"_x0020_"`.** Es el valor en blanco del enum, con el espacio codificado al estilo XML. `politicas.py` considera bloqueado cualquier valor no vacío, así que **`procesar` contra un Business Central real habría rechazado todos los pedidos** con «el cliente está bloqueado (_x0020_)», y la herramienta se lo pasaba tal cual al modelo. Corrección: `cliente_api.py` decodifica el enum (`_decodificar_enum`) en `buscar_clientes` y `obtener_cliente`: `"_x0020_"` → `""`; un bloqueo real (`Ship`, `Invoice`, `All`) se conserva. Así las políticas y las herramientas reciben lo mismo que con `ClienteDemo`.
 
-**Pruebas.** La API falsa de `tests/test_cliente_api.py` se comporta ahora como la real en lo medido: `contains` distingue mayúsculas y tildes, y `blocked` llega como `_x0020_`. 6 pruebas nuevas (total 44): normalización de `blocked` (y que «All» se conserva), desglose de palabras clave, búsqueda tolerante con tres redacciones («2 lámparas AMSTERDAM», «AMSTERDAM lámpara», «lampara de Ámsterdam») contra un catálogo como el de CRONUS ES, y que no se desglosa si la búsqueda completa encuentra algo. Con el `cliente_api.py` anterior el fichero de pruebas ni siquiera se importa (no existe `_palabras_clave`), así que esa comprobación aquí no aporta información.
+**Pruebas.** La API falsa de `tests/test_cliente_api.py` se comporta ahora como la real en lo que medí: `contains` distingue mayúsculas y tildes, y `blocked` llega como `_x0020_`. 6 pruebas nuevas (total 44): normalización de `blocked` (y que «All» se conserva), desglose de palabras clave, búsqueda tolerante con tres redacciones («2 lámparas AMSTERDAM», «AMSTERDAM lámpara», «lampara de Ámsterdam») contra un catálogo como el de CRONUS ES, y que no se desglosa si la búsqueda completa encuentra algo. Con el `cliente_api.py` anterior el fichero de pruebas ni siquiera se importa (no existe `_palabras_clave`), así que esa comprobación aquí no aporta información.
 
 **Lección.** Antes de diseñar una búsqueda contra el ERP real, medir cómo filtra (mayúsculas, tildes, plurales, idioma de los datos) con unas pocas lecturas directas; la API simulada de las pruebas debe imitar lo medido, no lo supuesto.
 
@@ -163,7 +163,7 @@ Respuesta final: «He identificado el cliente Adatum Corporation y el artículo 
 
 Sandbox TEST29 (CRONUS ES), `BC_MODO=api`, `AGENTE_SOLO_LECTURA=0`, umbral de aprobación 3.000 €, modelo `gpt-4.1-mini`.
 
-**Correos nuevos**, con artículos y clientes reales de TEST29 consultados por API y los nombres tal como están en CRONUS ES (sin códigos de artículo, para que el modelo tenga que buscarlos):
+**Correos nuevos**, con artículos y clientes reales de TEST29 que consulté por API y los nombres tal como están en CRONUS ES (sin códigos de artículo, para que el modelo tenga que buscarlos):
 
 - `ejemplos/correos/05_cronus_es_pequeno.txt`: Adatum Corporation, 10 × «Lámpara ÁMSTERDAM» (1928-S, 55,20) + 2 × «Silla inv. PARÍS, negra» (1900-S, 193,70) = 939,40 €.
 - `ejemplos/correos/06_cronus_es_grande.txt`: Trey Research (20000), 3 × «Escritorio ATENAS» (1896-S, 1.005,80) + 4 × «Silla giratoria LONDRES, azul» (1908-S, 191,00) = 3.781,40 €.
@@ -172,8 +172,8 @@ Sandbox TEST29 (CRONUS ES), `BC_MODO=api`, `AGENTE_SOLO_LECTURA=0`, umbral de ap
 
 **Flujo con aprobación** (`procesar 06_cronus_es_grande.txt --aprobar pendiente`, `pendientes`, `reanudar … --decision si --aprobador "Javier" --comentario "OK"`):
 
-1. `procesar` se para en `aprobacion_humana` (3.781,40 > 3.000) y guarda el checkpoint `66f533d0-…`. 2 llamadas al modelo (1.364/76, 1.566/181), 2.930 / 257 tokens, 0,0079 € (calculado con las trazas: en modo `pendiente` la CLI termina sin imprimir el coste).
-2. Pedidos en TEST29 leídos por API antes de procesar, durante la parada y justo antes de reanudar: el último seguía siendo el 101021. **Entre la parada y la reanudación no se creó ningún pedido.**
+1. `procesar` se para en `aprobacion_humana` (3.781,40 > 3.000) y guarda el checkpoint `66f533d0-…`. 2 llamadas al modelo (1.364/76, 1.566/181), 2.930 / 257 tokens, 0,0079 € (lo calculé con las trazas: en modo `pendiente` la CLI termina sin imprimir el coste).
+2. Leí por API los pedidos de TEST29 antes de procesar, durante la parada y justo antes de reanudar: el último seguía siendo el 101021. **Entre la parada y la reanudación no se creó ningún pedido.**
 3. `reanudar`, en otro proceso: aprobacion_humana → crear_pedido → redactar. **Pedido 101022** creado: Trey Research, 3.781,40 € sin impuestos (Business Central coincide), referencia TRY-5531, estado Draft, «Aprobado por Javier: OK». 1 llamada al modelo (redactor), 283 / 100 tokens, 0,0014 €.
 
 Total del flujo con aprobación: 3 llamadas, 3.213 / 357 tokens, 0,0093 €.
@@ -186,13 +186,13 @@ Total del flujo con aprobación: 3 llamadas, 3.213 / 357 tokens, 0,0093 €.
 
 ## 2026-10-18 · Auditoría de escrituras, ciclo de vida de los checkpoints e idempotencia
 
-Corrección de los tres hallazgos de la sección anterior.
+Corrijo los tres hallazgos de la sección anterior.
 
 **1. Las escrituras quedan en la auditoría, las pida el modelo o el workflow.** La escritura pasa a registrarse en la capa del cliente del ERP. `ClienteBC.crear_pedido_venta` (`bc/base.py`) es ahora un método común que llama a `_crear_pedido_venta` de cada implementación (`cliente_api.py`, `cliente_demo.py`) y registra el resultado con `AuditoriaHerramientas.registrar_escritura`: una línea `evento: escritura_erp` con los argumentos y la cabecera y las líneas del pedido creado, o con el error si falla. La CLI conecta la auditoría al cliente (`crear_cliente_bc(auditoria=…)`) en `procesar`, `reanudar` y `chat`.
 
 Para no duplicar líneas en `chat`, donde la escritura llega a través de la herramienta `crear_pedido_venta` y el middleware también escribiría la suya, el middleware publica una marca en una `ContextVar` mientras ejecuta la herramienta. Si el cliente del ERP audita la escritura dentro de esa llamada, la anota (`origen: herramienta`) y el middleware no escribe otra línea. Desde el workflow no hay marca y la línea sale con `origen: codigo`. Una escritura bloqueada por `SoloLectura` no llega al ERP, así que la sigue registrando el middleware, con el error de política.
 
-**2. Ciclo de vida de las aprobaciones guardadas.** Al resolverse una aprobación (en el mismo proceso con `--aprobar si|no` o por consola, o con `reanudar`), la CLI la anota en `checkpoints/aprobaciones_resueltas.jsonl` (checkpoint, fecha, decisión, aprobador y comentario). La extensión `.jsonl` evita que `FileCheckpointStorage`, que lee todos los `*.json` de la carpeta, lo tome por un checkpoint. Además, una aprobación también se considera resuelta si la ejecución ya continuó: hay un checkpoint posterior con su `previous_checkpoint_id`. Se comprobó en los cinco checkpoints de pausa resueltos hoy (todos tienen uno posterior), así que los cuatro antiguos de Adatum también dejan de salir sin necesidad de migrarlos.
+**2. Ciclo de vida de las aprobaciones guardadas.** Al resolverse una aprobación (en el mismo proceso con `--aprobar si|no` o por consola, o con `reanudar`), la CLI la anota en `checkpoints/aprobaciones_resueltas.jsonl` (checkpoint, fecha, decisión, aprobador y comentario). La extensión `.jsonl` evita que `FileCheckpointStorage`, que lee todos los `*.json` de la carpeta, lo tome por un checkpoint. Además, una aprobación también se considera resuelta si la ejecución ya continuó: hay un checkpoint posterior con su `previous_checkpoint_id`. Lo comprobé en los cinco checkpoints de pausa resueltos hoy (todos tienen uno posterior), así que los cuatro antiguos de Adatum también dejan de salir sin necesidad de migrarlos.
 
 - `pendientes` solo muestra las aprobaciones abiertas (`aprobaciones_pendientes`).
 - `reanudar` comprueba antes de nada `motivo_para_no_reanudar` y, si el checkpoint ya está resuelto, termina con código 1 y un mensaje claro («No se reanuda el checkpoint … La aprobación de este checkpoint ya se resolvió el …: aprobada por Javier.»).
@@ -205,7 +205,7 @@ Para no duplicar líneas en `chat`, donde la escritura llega a través de la her
 
 ## 2026-10-18 · Verificación en el sandbox de auditoría, checkpoints e idempotencia
 
-TEST29 (CRONUS ES), `BC_MODO=api`, `AGENTE_SOLO_LECTURA=0`, `gpt-4.1-mini`. La misma secuencia dos veces: `procesar 06_cronus_es_grande.txt --aprobar pendiente` → `pendientes` → `reanudar --decision si --aprobador "Javier" --comentario "OK"` → `pendientes` → segundo `reanudar` del mismo checkpoint. Los pedidos de TEST29 se leyeron por API antes, durante la parada y después.
+TEST29 (CRONUS ES), `BC_MODO=api`, `AGENTE_SOLO_LECTURA=0`, `gpt-4.1-mini`. La misma secuencia dos veces: `procesar 06_cronus_es_grande.txt --aprobar pendiente` → `pendientes` → `reanudar --decision si --aprobador "Javier" --comentario "OK"` → `pendientes` → segundo `reanudar` del mismo checkpoint. Leí por API los pedidos de TEST29 antes, durante la parada y después.
 
 **A · Referencia TRY-5531, la del pedido 101022 que ya existía (idempotencia contra el ERP real).**
 
@@ -215,7 +215,7 @@ TEST29 (CRONUS ES), `BC_MODO=api`, `AGENTE_SOLO_LECTURA=0`, `gpt-4.1-mini`. La m
 - `pendientes` → «No hay aprobaciones pendientes.»; el segundo `reanudar` termina con código 1: «No se reanuda el checkpoint f6aaec24-… La aprobación de este checkpoint ya se resolvió el 2026-10-18T12:25:34…: aprobada por Javier.»
 - En TEST29, el último pedido sigue siendo el 101022: **no se duplicó**. La auditoría registra el intento rechazado: `crear_pedido_venta · escritura_erp · origen: codigo · error: PedidoDuplicado: Ya existe el pedido 101022…`.
 
-**B · Referencia nueva TRY-5532 (`06_cronus_es_grande.txt` cambia a esta referencia).**
+**B · Referencia nueva TRY-5532 (cambié `06_cronus_es_grande.txt` a esta referencia).**
 
 - `procesar` se para e imprime «Coste hasta la parada: … 0.0079 €» (2 llamadas, 2.930 / 257 tokens). Durante la parada, el último pedido de TEST29 sigue siendo el 101022.
 - `pendientes` muestra solo el checkpoint nuevo (`8a693c10-…`).
@@ -227,7 +227,7 @@ Las comprobaciones de las dos secuencias se cumplieron: coste impreso en la para
 
 ## 2026-10-18 · Ejecuciones con el modelo real: llamadas y coste
 
-Azure OpenAI, despliegue `gpt-4.1-mini`, `BC_MODO=demo` (ERP simulado: no se escribió nada real). Las llamadas al modelo salen de las trazas (`ENABLE_CONSOLE_EXPORTERS=1`, spans `chat`); sus tokens cuadran con la línea «Coste» de la CLI. El coste está calculado con las tarifas por defecto del ejemplo (2 € por millón de tokens de entrada y 8 € por millón de salida), no con la tarifa real de Azure.
+Azure OpenAI, despliegue `gpt-4.1-mini`, `BC_MODO=demo` (ERP simulado: no se escribió nada real). Las llamadas al modelo salen de las trazas (`ENABLE_CONSOLE_EXPORTERS=1`, spans `chat`); sus tokens cuadran con la línea «Coste» de la CLI. Calculé el coste con las tarifas por defecto del ejemplo (2 € por millón de tokens de entrada y 8 € por millón de salida), no con la tarifa real de Azure.
 
 | # | Ejecución | Resultado | Llamadas al modelo | Tokens entrada / salida | Coste estimado |
 |---|---|---|---|---|---|

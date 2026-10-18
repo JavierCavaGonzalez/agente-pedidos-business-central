@@ -30,7 +30,7 @@ Funciona **sin ninguna credencial** en modo demo (modelo simulado + Business Cen
 12. [Pruebas](#12-pruebas)
 13. [Estructura del repositorio y qué hace cada archivo](#13-estructura-del-repositorio-y-qué-hace-cada-archivo)
 14. [Limitaciones y siguientes pasos](#14-limitaciones-y-siguientes-pasos)
-15. [Para construirlo con Claude Code](#15-para-construirlo-con-claude-code)
+15. [Para construirlo con un asistente de programación](#15-para-construirlo-con-un-asistente-de-programación)
 16. [Licencia](#16-licencia)
 
 ---
@@ -247,7 +247,7 @@ PYTHONPATH=src devui ./devui --no-auth
 
 Aparecen dos entidades: el agente `interprete` y el workflow `pedidos`, ambos con el ERP simulado.
 
-**Servidor MCP** (`src/agente_pedidos/mcp_server.py`, requiere `pip install mcp`): expone las cuatro lecturas del ERP simulado como herramientas MCP por stdio. `crear_herramienta_mcp()` devuelve un `MCPStdioTool` para que el agente las consuma por MCP en lugar de como funciones locales (la prueba `tests/test_mcp.py` lo ejecuta). También puedes conectarlo a VS Code, Claude o cualquier host MCP con el comando `python -m agente_pedidos.mcp_server` y `PYTHONPATH=src`.
+**Servidor MCP** (`src/agente_pedidos/mcp_server.py`, requiere `pip install mcp`): expone las cuatro lecturas del ERP simulado como herramientas MCP por stdio. `crear_herramienta_mcp()` devuelve un `MCPStdioTool` para que el agente las consuma por MCP en lugar de como funciones locales (la prueba `tests/test_mcp.py` lo ejecuta). También puedes conectarlo a VS Code, Copilot Studio u otros hosts MCP con el comando `python -m agente_pedidos.mcp_server` y `PYTHONPATH=src`.
 
 ## 11. Oficina de agentes (interfaz web)
 
@@ -315,8 +315,8 @@ agente-pedidos-business-central/
 ├── devui/                        ← entidades para DevUI (agente y workflow)
 ├── docs/
 │   ├── arquitectura.md           ← diagramas (esqueleto, recorrido, workflow)
-│   ├── PROMPT-CLAUDE-CODE.md     ← prompt para reconstruir el proyecto con Claude Code
-│   ├── notas-de-construccion.md  ← fallos encontrados al probarlo con un modelo real y cómo se corrigieron
+│   ├── PROMPT-ASISTENTE.md       ← prompt para reconstruir el proyecto con un asistente de programación
+│   ├── notas-de-construccion.md  ← fallos que encontré al probarlo con un modelo real y cómo los corregí
 │   └── oficina/                  ← especificación, notas y captura de la oficina de agentes
 ├── src/agente_pedidos/
 │   ├── __main__.py               ← permite `python -m agente_pedidos`
@@ -366,9 +366,9 @@ Detalle de cada pieza:
 - **Lo aprendido al probarlo de verdad**: [`docs/notas-de-construccion.md`](docs/notas-de-construccion.md) recoge cada fallo encontrado al pasar del modo demo a un modelo real y a un sandbox de Business Central (lectura de `.env`, prompts, el 501 por `or` entre campos, las rarezas de la API, la auditoría de las escrituras, los checkpoints ya resueltos, la idempotencia), con su causa, la corrección, las pruebas y lo que costó cada ejecución.
 - **Siguientes pasos razonables**: desplegar como hosted agent en Foundry (`azd`), exportar trazas a Application Insights, añadir una suite de evaluación con correos reales anonimizados (desarrollo guiado por evaluación, cap. 10 del libro) y sustituir la entrada por fichero por un buzón real (Microsoft Graph).
 
-## 15. Para construirlo con Claude Code
+## 15. Para construirlo con un asistente de programación
 
-El proyecto se diseñó para que un asistente de código lo genere a partir de un prompt. En [`docs/PROMPT-CLAUDE-CODE.md`](docs/PROMPT-CLAUDE-CODE.md) está el prompt completo, listo para pegar, con la lista de piezas, las reglas (versión fijada, nombres de la API vigente, sin credenciales en el código, modo demo obligatorio, pruebas) y los comandos de verificación.
+Si quieres reconstruir el proyecto, o adaptarlo a otro proceso del ERP, con un asistente de programación que pueda ejecutar comandos, en [`docs/PROMPT-ASISTENTE.md`](docs/PROMPT-ASISTENTE.md) tienes el prompt completo, listo para pegar, con la lista de piezas, las reglas (versión fijada, nombres de la API vigente, sin credenciales en el código, modo demo obligatorio, pruebas) y los comandos de verificación.
 
 ## 16. Licencia
 
