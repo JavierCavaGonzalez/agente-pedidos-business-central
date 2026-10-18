@@ -9,9 +9,19 @@ import pytest
 
 from agente_pedidos.bc import ClienteApiV2
 from agente_pedidos.bc.base import ErrorBC
+from agente_pedidos.bc.cliente_api import _palabras_clave
 
-ADATUM = {"id": "c1", "number": "10000", "displayName": "Adatum Corporation", "blocked": " "}
+# La API real devuelve el valor en blanco del enum 'blocked' (no bloqueado) como '_x0020_'.
+ADATUM = {"id": "c1", "number": "10000", "displayName": "Adatum Corporation", "blocked": "_x0020_"}
+ADATUM_NORMALIZADO = {**ADATUM, "blocked": ""}
+RELECLOUD = {"id": "c5", "number": "50000", "displayName": "Relecloud", "blocked": "All"}
 LAMPARA = {"id": "i1", "number": "1928-S", "displayName": "AMSTERDAM Lamp", "inventory": 60, "unitPrice": 55.9}
+# Catálogo como el de CRONUS ES: nombres en español y con tildes.
+CATALOGO_ES = [
+    {"id": "e1", "number": "1896-S", "displayName": "Mesa ATENAS", "blocked": False},
+    {"id": "e2", "number": "1928-S", "displayName": "Lámpara ÁMSTERDAM", "blocked": False},
+    {"id": "e3", "number": "1929-S", "displayName": "Lámpara de pie MÚNICH", "blocked": False},
+]
 
 
 def campos_unidos_por_or(filtro: str) -> set[str]:
@@ -24,8 +34,10 @@ def campos_unidos_por_or(filtro: str) -> set[str]:
 class ApiFalsa:
     """Imita la API v2.0: token, y GET de customers/items con la restricción del 'or' entre campos."""
 
-    def __init__(self) -> None:
+    def __init__(self, clientes: list[dict] | None = None, articulos: list[dict] | None = None) -> None:
         self.filtros: list[str] = []
+        self.clientes = clientes if clientes is not None else [ADATUM]
+        self.articulos = articulos if articulos is not None else [LAMPARA]
 
     def __call__(self, peticion: httpx.Request) -> httpx.Response:
         if "oauth2" in peticion.url.path:
@@ -35,12 +47,13 @@ class ApiFalsa:
         if len(campos_unidos_por_or(filtro)) > 1:
             mensaje = "The 'OR' operator is not supported on distinct fields on an OData filter."
             return httpx.Response(501, json={"error": {"code": "NotImplemented", "message": mensaje}})
-        registros = [ADATUM] if peticion.url.path.endswith("/customers") else [LAMPARA]
+        registros = self.clientes if peticion.url.path.endswith("/customers") else self.articulos
         if "number eq" in filtro:
             numero = re.search(r"number eq '([^']*)'", filtro).group(1)
             return httpx.Response(200, json={"value": [r for r in registros if r["number"] == numero]})
+        # Como el 'contains' real: distingue mayúsculas y tildes.
         palabras = re.findall(r"contains\(displayName,'([^']*)'\)", filtro)
-        return httpx.Response(200, json={"value": [r for r in registros if all(p.lower() in r["displayName"].lower() for p in palabras)]})
+        return httpx.Response(200, json={"value": [r for r in registros if all(p in r["displayName"] for p in palabras)]})
 
 
 @pytest.fixture
@@ -62,7 +75,7 @@ def test_la_api_falsa_rechaza_or_entre_campos_como_la_real():
 
 
 async def test_buscar_por_nombre_solo_filtra_por_displayname(bc, api):
-    assert await bc.buscar_clientes("Adatum Corporation") == [ADATUM]
+    assert await bc.buscar_clientes("Adatum Corporation") == [ADATUM_NORMALIZADO]
     assert await bc.buscar_articulos("AMSTERDAM Lamp") == [LAMPARA]
     assert api.filtros == [
         "contains(displayName,'Adatum Corporation')",
@@ -98,4 +111,39 @@ async def test_un_error_de_la_api_llega_como_errorbc_con_el_codigo(bc, api):
     bc._buscar = con_or
     with pytest.raises(ErrorBC, match="501"):
         await bc.buscar_clientes("Adatum")
+    await bc.cerrar()
+
+
+async def test_blocked_x0020_se_normaliza_a_vacio_y_un_bloqueo_real_se_conserva(api):
+    api.clientes = [ADATUM, RELECLOUD]
+    bc = ClienteApiV2("tenant", "Sandbox", "app", "secreto", id_empresa="empresa-1")
+    bc._http = httpx.AsyncClient(transport=httpx.MockTransport(api))
+    assert (await bc.buscar_clientes("Adatum"))[0]["blocked"] == ""
+    assert (await bc.obtener_cliente("10000"))["blocked"] == ""
+    assert (await bc.obtener_cliente("50000"))["blocked"] == "All"
+    await bc.cerrar()
+
+
+def test_palabras_clave_ignora_cortas_y_vacias_y_pasa_a_singular():
+    assert _palabras_clave("2 lámparas de pie para la oficina AMSTERDAM") == ["lámpara", "pie", "oficina", "AMSTERDAM"]
+    assert _palabras_clave("de la con un") == []
+
+
+@pytest.mark.parametrize("texto", ["2 lámparas AMSTERDAM", "AMSTERDAM lámpara", "lampara de Ámsterdam"])
+async def test_busqueda_de_articulos_tolerante_a_mayusculas_tildes_e_idioma(texto):
+    api = ApiFalsa(articulos=CATALOGO_ES)
+    bc = ClienteApiV2("tenant", "Sandbox", "app", "secreto", id_empresa="empresa-1")
+    bc._http = httpx.AsyncClient(transport=httpx.MockTransport(api))
+
+    resultado = await bc.buscar_articulos(texto)
+
+    assert resultado and resultado[0]["number"] == "1928-S"  # la que coincide en más palabras, primero
+    assert all(len(campos_unidos_por_or(f)) <= 1 for f in api.filtros)
+    assert not any("'de'" in f or "'2'" in f for f in api.filtros[1:])  # el desglose ignora cortas y vacías
+    await bc.cerrar()
+
+
+async def test_si_la_busqueda_completa_encuentra_algo_no_se_desglosa(api, bc):
+    assert await bc.buscar_articulos("AMSTERDAM Lamp") == [LAMPARA]
+    assert len(api.filtros) == 1
     await bc.cerrar()

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 import time
+import unicodedata
 from typing import Any
 
 import httpx
@@ -31,11 +32,46 @@ AMBITO = "https://api.businesscentral.dynamics.com/.default"
 
 # Un número de cliente o de artículo: dígitos, o dígitos con sufijo (10000, 1928-S).
 PARECE_CODIGO = re.compile(r"^\d+(?:-[A-Za-z0-9]+)?$")
+# Palabras que no ayudan a buscar un artículo (además de las de menos de tres letras).
+PALABRAS_VACIAS = {"del", "las", "los", "con", "para", "una", "unos", "unas", "por", "que", "sin", "unidades", "uds"}
 
 
 def _escapar_odata(texto: str) -> str:
     """Escapa comillas simples para usarlas dentro de un filtro OData."""
     return texto.replace("'", "''")
+
+
+def _plegar(texto: str) -> str:
+    """Minúsculas y sin tildes, para comparar en el código ('Lámpara ÁMSTERDAM' ~ 'lampara amsterdam')."""
+    return "".join(c for c in unicodedata.normalize("NFKD", texto) if not unicodedata.combining(c)).lower()
+
+
+def _palabras_clave(texto: str) -> list[str]:
+    """Palabras útiles para buscar, en singular aproximado ('lámparas' -> 'lámpara')."""
+    claves = []
+    for palabra in re.findall(r"[^\W_][\w-]*", texto):
+        if len(palabra) < 3 or _plegar(palabra) in PALABRAS_VACIAS:
+            continue
+        if len(palabra) >= 4 and palabra[-1] in "sS":
+            palabra = palabra[:-1]  # 'contains' con el singular también encuentra el plural
+        claves.append(palabra)
+    return list(dict.fromkeys(claves))
+
+
+def _variantes_mayusculas(palabra: str) -> list[str]:
+    """El 'contains' de Business Central distingue mayúsculas: se prueba cada forma habitual."""
+    return list(dict.fromkeys([palabra, palabra.lower(), palabra.capitalize(), palabra.upper()]))
+
+
+def _decodificar_enum(valor: Any) -> str:
+    """La API devuelve el valor en blanco de un enum como '_x0020_' (un espacio codificado)."""
+    return str(valor or "").replace("_x0020_", " ").strip()
+
+
+def _normalizar_cliente(cliente: dict[str, Any]) -> dict[str, Any]:
+    if "blocked" in cliente:
+        cliente["blocked"] = _decodificar_enum(cliente["blocked"])  # '_x0020_' (no bloqueado) -> ''
+    return cliente
 
 
 def _sin_duplicados(registros: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -162,12 +198,13 @@ class ClienteApiV2(ClienteBC):
         t = texto.strip()
         if not t:
             return []
-        return await self._buscar(
+        clientes = await self._buscar(
             "customers",
             f"contains(displayName,'{_escapar_odata(t)}')",
             t,
             "id,number,displayName,email,blocked,creditLimit,balanceDue",
         )
+        return [_normalizar_cliente(c) for c in clientes]
 
     async def obtener_cliente(self, numero: str) -> dict[str, Any] | None:
         empresa = await self._ruta_empresa()
@@ -177,18 +214,43 @@ class ClienteApiV2(ClienteBC):
             params={"$filter": f"number eq '{_escapar_odata(numero.strip())}'", "$top": 1},
         )
         valores = datos.get("value", [])
-        return valores[0] if valores else None
+        return _normalizar_cliente(valores[0]) if valores else None
 
     async def buscar_articulos(self, texto: str) -> list[dict[str, Any]]:
-        palabras = [_escapar_odata(p) for p in texto.strip().split() if p]
+        """Busca con todas las palabras; si no hay resultados, palabra por palabra.
+
+        El ``contains`` de Business Central distingue mayúsculas y tildes, y los nombres pueden
+        estar en otro idioma («Lámpara ÁMSTERDAM» en CRONUS ES). Si la búsqueda completa no
+        encuentra nada, se busca cada palabra útil por separado (con sus variantes de mayúsculas)
+        y se ordenan los candidatos en el código por cuántas palabras coinciden sin tildes.
+        """
+        t = texto.strip()
+        palabras = [_escapar_odata(p) for p in t.split() if p]
         if not palabras:
             return []
-        return await self._buscar(
-            "items",
-            " and ".join(f"contains(displayName,'{p}')" for p in palabras),
-            texto.strip(),
-            "id,number,displayName,type,blocked,inventory,unitPrice,baseUnitOfMeasureCode",
-        )
+        campos = "id,number,displayName,type,blocked,inventory,unitPrice,baseUnitOfMeasureCode"
+        articulos = await self._buscar("items", " and ".join(f"contains(displayName,'{p}')" for p in palabras), t, campos)
+        claves = _palabras_clave(t)
+        if articulos or not claves:
+            return articulos
+
+        empresa = await self._ruta_empresa()
+        candidatos: list[dict[str, Any]] = []
+        for clave in claves:
+            for variante in _variantes_mayusculas(clave):
+                datos = await self._peticion(
+                    "GET",
+                    f"{empresa}/items",
+                    params={"$filter": f"contains(displayName,'{_escapar_odata(variante)}')", "$top": 20, "$select": campos},
+                )
+                candidatos.extend(datos.get("value", []))
+        plegadas = [_plegar(c) for c in claves]
+
+        def coincidencias(articulo: dict[str, Any]) -> int:
+            nombre = _plegar(articulo.get("displayName", ""))
+            return sum(clave in nombre for clave in plegadas)
+
+        return sorted(_sin_duplicados(candidatos), key=coincidencias, reverse=True)[:10]
 
     async def obtener_articulo(self, numero: str) -> dict[str, Any] | None:
         empresa = await self._ruta_empresa()

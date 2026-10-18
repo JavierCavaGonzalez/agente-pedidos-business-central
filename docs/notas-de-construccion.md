@@ -117,6 +117,26 @@ Business Central respondió 501: The 'OR' operator is not supported on distinct 
 
 **Lección.** Un ERP simulado sirve para el esqueleto, pero no reproduce las limitaciones del protocolo real (OData de Business Central). Contra el ERP real hay que probar antes las lecturas, sin el modelo, una a una.
 
+## 2026-10-18 · Segunda prueba en el sandbox: el artículo no aparece y `blocked` llega como `_x0020_`
+
+**Ejecución tras corregir los filtros.** `chat "Empresa: Adatum Corporation. Necesito 2 lámparas AMSTERDAM"` contra TEST29 con `AGENTE_SOLO_LECTURA=1` y `CHAT_APROBAR=si`: token ✅, empresa ✅, cliente ✅ (10000 Adatum Corporation, ya sin 501), artículo ❌ (`buscar_articulos("AMSTERDAM lámpara")` sin resultados) y, por tanto, bloqueo de la escritura sin probar: el agente no llegó a pedir `crear_pedido_venta`. 2 llamadas al modelo, 1.825 / 101 tokens, 0,0045 €. Esta vez la auditoría sí registró las dos lecturas.
+
+**Hallazgo 1: el `contains` de Business Central distingue mayúsculas y tildes, y CRONUS ES tiene los nombres en español.** El artículo 1928-S se llama «Lámpara ÁMSTERDAM». Medido en TEST29 con `contains(displayName,'…')`: «Lámpara» → 1 resultado; «lámpara», «LÁMPARA», «lampara», «Lámparas», «ámsterdam» y «AMSTERDAM» → 0. Los datos de demostración (`datos_demo.json`) usan los nombres del CRONUS en inglés («AMSTERDAM Lamp») y `ClienteDemo` compara sin distinguir mayúsculas, así que la demo no podía mostrarlo.
+
+**Corrección.** `buscar_articulos` en `cliente_api.py`:
+
+1. Primero busca con todas las palabras (`contains(…) and contains(…)`), como antes. Si encuentra algo, no hace nada más.
+2. Si no, busca **cada palabra útil por separado**: ignora las de menos de tres letras y las palabras vacías (`PALABRAS_VACIAS`: del, las, los, con, para, una…), pasa a singular las de cuatro letras o más acabadas en «s» (`contains` con «Lámpara» también encuentra «Lámparas») y prueba sus variantes de mayúsculas (tal cual, minúsculas, Capitalizada, MAYÚSCULAS). Cada petición filtra un solo campo, sin `or`.
+3. Une los candidatos sin duplicados y los ordena en el código por cuántas palabras coinciden **sin tildes ni mayúsculas** (`_plegar`). «2 lámparas AMSTERDAM» → busca «lámpara» (encuentra «Lámpara ÁMSTERDAM» con la variante «Lámpara») y la pone primero porque «amsterdam» coincide con «ÁMSTERDAM» una vez plegado.
+
+Las tildes no se pueden adivinar desde el código (una búsqueda de solo «AMSTERDAM» sigue sin encontrar «ÁMSTERDAM»). Por eso `prompts/interprete.md` y `prompts/asistente.md` piden además al modelo que, si una búsqueda no da resultados, la repita con el nombre en español y con tildes antes de concluir que el artículo no existe.
+
+**Hallazgo 2: `blocked` de un cliente no bloqueado llega como `"_x0020_"`.** Es el valor en blanco del enum, con el espacio codificado al estilo XML. `politicas.py` considera bloqueado cualquier valor no vacío, así que **`procesar` contra un Business Central real habría rechazado todos los pedidos** con «el cliente está bloqueado (_x0020_)», y la herramienta se lo pasaba tal cual al modelo. Corrección: `cliente_api.py` decodifica el enum (`_decodificar_enum`) en `buscar_clientes` y `obtener_cliente`: `"_x0020_"` → `""`; un bloqueo real (`Ship`, `Invoice`, `All`) se conserva. Así las políticas y las herramientas reciben lo mismo que con `ClienteDemo`.
+
+**Pruebas.** La API falsa de `tests/test_cliente_api.py` se comporta ahora como la real en lo medido: `contains` distingue mayúsculas y tildes, y `blocked` llega como `_x0020_`. 6 pruebas nuevas (total 44): normalización de `blocked` (y que «All» se conserva), desglose de palabras clave, búsqueda tolerante con tres redacciones («2 lámparas AMSTERDAM», «AMSTERDAM lámpara», «lampara de Ámsterdam») contra un catálogo como el de CRONUS ES, y que no se desglosa si la búsqueda completa encuentra algo. Con el `cliente_api.py` anterior el fichero de pruebas ni siquiera se importa (no existe `_palabras_clave`), así que esa comprobación aquí no aporta información.
+
+**Lección.** Antes de diseñar una búsqueda contra el ERP real, medir cómo filtra (mayúsculas, tildes, plurales, idioma de los datos) con unas pocas lecturas directas; la API simulada de las pruebas debe imitar lo medido, no lo supuesto.
+
 ## 2026-10-18 · Ejecuciones con el modelo real: llamadas y coste
 
 Azure OpenAI, despliegue `gpt-4.1-mini`, `BC_MODO=demo` (ERP simulado: no se escribió nada real). Las llamadas al modelo salen de las trazas (`ENABLE_CONSOLE_EXPORTERS=1`, spans `chat`); sus tokens cuadran con la línea «Coste» de la CLI. El coste está calculado con las tarifas por defecto del ejemplo (2 € por millón de tokens de entrada y 8 € por millón de salida), no con la tarifa real de Azure.
