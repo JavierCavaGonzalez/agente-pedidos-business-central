@@ -68,8 +68,8 @@ def tarea_actual() -> str | None:
     return _TAREA.get()
 
 
-def emitir(tipo: str, agente: str = AGENTE_PEDIDOS, tarea: str | None = None, **datos: Any) -> dict[str, Any]:
-    """Añade un evento a ``eventos.jsonl`` y lo devuelve. Nunca interrumpe al agente si falla."""
+def emitir(tipo: str, agente: str = AGENTE_PEDIDOS, tarea: str | None = None, *, fichero: Path | None = None, **datos: Any) -> dict[str, Any]:
+    """Añade un evento a ``eventos.jsonl`` (o a ``fichero``) y lo devuelve. Nunca interrumpe al agente si falla."""
     if tipo not in TIPOS:
         raise ValueError(f"Tipo de evento desconocido: {tipo}")
     evento = {
@@ -81,10 +81,11 @@ def emitir(tipo: str, agente: str = AGENTE_PEDIDOS, tarea: str | None = None, **
     }
     linea = json.dumps(evento, ensure_ascii=False, default=str) + "\n"
     try:
-        ruta = ruta_eventos()
+        ruta = fichero or ruta_eventos()
         # Una sola escritura por línea en modo «append»: varios procesos (procesar, reanudar,
         # el backend) pueden escribir a la vez sin mezclar líneas.
-        with _CERROJO, ruta.open("a", encoding="utf-8") as fichero:
+        # newline="\n": el mismo formato en Windows que en Linux (sin \r\n).
+        with _CERROJO, ruta.open("a", encoding="utf-8", newline="\n") as fichero:
             fichero.write(linea)
     except OSError:
         pass  # el registro operativo no puede tumbar una escritura en el ERP
