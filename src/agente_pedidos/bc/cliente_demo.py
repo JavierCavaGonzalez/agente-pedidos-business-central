@@ -18,6 +18,7 @@ RUTA_DATOS = Path(__file__).with_name("datos_demo.json")
 
 
 class ClienteDemo(ClienteBC):
+    modo = "demo"
     _siguiente_numero = 101001  # compartido entre instancias para que los números no se repitan en una misma ejecución
 
     def __init__(self, ruta_datos: Path | None = None) -> None:

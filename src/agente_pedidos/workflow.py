@@ -45,6 +45,7 @@ from agent_framework import (
 )
 from typing_extensions import Never
 
+from . import eventos
 from .agentes import crear_agente_interprete, crear_agente_redactor
 from .bc.base import ClienteBC, ErrorBC, PedidoDuplicado
 from .esquemas import DecisionHumana, LineaInterpretada, LineaValidada, PedidoInterpretado, PedidoValidado, ResultadoPedido
@@ -67,6 +68,7 @@ class SolicitudAprobacion:
     nombre_cliente: str | None
     motivos: list[str] = field(default_factory=list)
     pedido_validado: dict[str, Any] = field(default_factory=dict)  # PedidoValidado serializado
+    tarea: str | None = None  # para que «reanudar», en otro proceso, siga contando en la misma tarea
 
 
 @dataclass
@@ -105,6 +107,7 @@ class Interpretar(Executor):
 
     @handler
     async def interpretar(self, correo: str, ctx: WorkflowContext[PedidoInterpretado]) -> None:
+        eventos.emitir("paso", nombre="interpretar", descripcion="Leyendo el correo e identificando cliente y artículos")
         respuesta = await self.agente.run(correo, options={"response_format": PedidoInterpretado})
         self.contador.registrar(respuesta)
         pedido = respuesta.value
@@ -124,7 +127,9 @@ class Validar(Executor):
 
     @handler
     async def validar(self, pedido: PedidoInterpretado, ctx: WorkflowContext[PedidoValidado]) -> None:
+        eventos.emitir("paso", nombre="validar", descripcion="Comprobando cliente, artículos, existencias, crédito e importe")
         validado = await validar_pedido(pedido, self.bc, self.politica)
+        eventos.emitir("paso", nombre="politica", descripcion=_decision_de_politica(validado))
         await ctx.send_message(validado)
 
 
@@ -143,7 +148,9 @@ class AprobacionHumana(Executor):
             nombre_cliente=validado.nombre_cliente,
             motivos=list(validado.motivos_aprobacion),
             pedido_validado=validado.model_dump(),
+            tarea=eventos.tarea_actual(),
         )
+        eventos.emitir("paso", nombre="aprobacion_humana", descripcion="Esperando la decisión del director")
         await ctx.request_info(solicitud, DecisionHumana)
 
     @response_handler
@@ -176,6 +183,7 @@ class CrearPedido(Executor):
         await ctx.send_message(await self._crear(validado, comentario=comentario))
 
     async def _crear(self, validado: PedidoValidado, comentario: str) -> ResultadoPedido:
+        eventos.emitir("paso", nombre="crear_pedido", descripcion=f"Creando el pedido en Business Central ({euros(validado.total)})")
         lineas = [{"numero_articulo": l.numero_articulo, "cantidad": l.cantidad} for l in validado.lineas]
         try:
             pedido = await self.bc.crear_pedido_venta(
@@ -188,6 +196,7 @@ class CrearPedido(Executor):
             # Idempotencia: el mismo correo procesado dos veces no crea dos pedidos.
             return ResultadoPedido(
                 creado=False,
+                estado="rechazado",
                 numero_pedido=duplicado.pedido.get("number"),
                 total=float(duplicado.pedido.get("totalAmountExcludingTax") or validado.total),
                 numero_cliente=validado.numero_cliente,
@@ -197,6 +206,7 @@ class CrearPedido(Executor):
         except ErrorBC as error:
             return ResultadoPedido(
                 creado=False,
+                estado="rechazado",
                 total=validado.total,
                 numero_cliente=validado.numero_cliente,
                 nombre_cliente=validado.nombre_cliente,
@@ -204,6 +214,7 @@ class CrearPedido(Executor):
             )
         return ResultadoPedido(
             creado=True,
+            estado="creado",
             numero_pedido=pedido["number"],
             total=float(pedido.get("totalAmountExcludingTax", validado.total)),
             numero_cliente=pedido.get("customerNumber", validado.numero_cliente),
@@ -221,9 +232,12 @@ class Rechazar(Executor):
     @handler
     async def por_validacion(self, validado: PedidoValidado, ctx: WorkflowContext[ResultadoPedido]) -> None:
         motivos = validado.errores or ["El pedido no cumple la política"]
+        eventos.emitir("paso", nombre="rechazar", descripcion="No se crea: " + "; ".join(motivos))
+        eventos.emitir("erp_bloqueada", operacion="crear_pedido", motivo="Validación: " + "; ".join(motivos))
         await ctx.send_message(
             ResultadoPedido(
                 creado=False,
+                estado="rechazado",
                 total=validado.total,
                 numero_cliente=validado.numero_cliente,
                 nombre_cliente=validado.nombre_cliente,
@@ -234,9 +248,11 @@ class Rechazar(Executor):
     @handler
     async def por_persona(self, decision: DecisionTomada, ctx: WorkflowContext[ResultadoPedido]) -> None:
         validado = PedidoValidado.model_validate(decision.pedido_validado)
+        eventos.emitir("paso", nombre="rechazar", descripcion=f"Denegado por {decision.aprobador or 'el director'}")
         await ctx.send_message(
             ResultadoPedido(
                 creado=False,
+                estado="denegado",
                 total=validado.total,
                 numero_cliente=validado.numero_cliente,
                 nombre_cliente=validado.nombre_cliente,
@@ -255,6 +271,7 @@ class Redactar(Executor):
 
     @handler
     async def redactar(self, resultado: ResultadoPedido, ctx: WorkflowContext[Never, ResultadoPedido]) -> None:
+        eventos.emitir("paso", nombre="redactar", descripcion="Redactando la respuesta al cliente")
         resumen = (
             f"Resultado: {'pedido creado' if resultado.creado else 'no se ha creado el pedido'}\n"
             f"Número de pedido: {resultado.numero_pedido or '-'}\n"
@@ -266,6 +283,19 @@ class Redactar(Executor):
         self.contador.registrar(respuesta)
         resultado.respuesta_cliente = respuesta.text or ""
         await ctx.yield_output(resultado)
+
+
+def euros(importe: float) -> str:
+    """5875.6 -> «5.875,60 €»."""
+    return f"{importe:,.2f} €".replace(",", "_").replace(".", ",").replace("_", ".")
+
+
+def _decision_de_politica(validado: PedidoValidado) -> str:
+    if not validado.apto_para_crear:
+        return "No se puede crear: " + "; ".join(validado.errores or ["no cumple la política"])
+    if validado.requiere_aprobacion:
+        return f"Necesita aprobación ({euros(validado.total)}): " + "; ".join(validado.motivos_aprobacion)
+    return f"Dentro de la política: se crea sin aprobación ({euros(validado.total)})"
 
 
 # --- construcción ----------------------------------------------------------------------------

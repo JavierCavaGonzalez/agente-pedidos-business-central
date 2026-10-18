@@ -87,6 +87,7 @@ class DecisionHumana(BaseModel):
 
 class ResultadoPedido(BaseModel):
     creado: bool
+    estado: str = ""  # creado | rechazado | denegado: lo que pasó, sin tener que leer el mensaje
     numero_pedido: str | None = None
     total: float = 0.0
     numero_cliente: str | None = None

@@ -10,6 +10,8 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any
 
+from .. import eventos
+
 
 class ErrorBC(Exception):
     """Error devuelto por Business Central (o por el cliente de demostración)."""
@@ -41,6 +43,8 @@ class ClienteBC(ABC):
 
     #: Registro de auditoría de las escrituras (``AuditoriaHerramientas``); lo asigna la aplicación.
     auditoria: Any = None
+    #: ``demo`` o ``api``: aparece en los eventos de escritura de la oficina.
+    modo: str = "?"
 
     @abstractmethod
     async def buscar_clientes(self, texto: str) -> list[dict[str, Any]]:
@@ -87,8 +91,17 @@ class ClienteBC(ABC):
             pedido = await self._crear_pedido_venta(numero_cliente, lineas, referencia, fecha_entrega)
         except Exception as error:
             self._auditar_escritura(argumentos, inicio, error=f"{type(error).__name__}: {error}")
+            eventos.emitir("erp_bloqueada", operacion="crear_pedido", motivo=eventos.resumir_error(error), modo=self.modo)
             raise
         self._auditar_escritura(argumentos, inicio, resultado=_resumen_pedido(pedido))
+        eventos.emitir(
+            "erp_escritura",
+            operacion="crear_pedido",
+            pedido=pedido.get("number"),
+            importe=pedido.get("totalAmountExcludingTax"),
+            cliente=numero_cliente,
+            modo=self.modo,
+        )
         return pedido
 
     def _auditar_escritura(self, argumentos: dict[str, Any], inicio: float, resultado: Any = None, error: str | None = None) -> None:

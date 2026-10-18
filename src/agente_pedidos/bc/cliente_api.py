@@ -87,6 +87,8 @@ def _sin_duplicados(registros: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 class ClienteApiV2(ClienteBC):
+    modo = "api"
+
     def __init__(
         self,
         tenant_id: str,

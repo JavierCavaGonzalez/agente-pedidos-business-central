@@ -19,15 +19,17 @@ import json
 import os
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from agent_framework import Message
 
+from . import eventos
 from .agentes import crear_agente_asistente
 from .bc import ClienteApiV2, ClienteBC, ClienteDemo
 from .esquemas import DecisionHumana, ResultadoPedido
-from .middleware import AuditoriaHerramientas, PresupuestoLlamadas, SoloLectura
+from .middleware import AuditoriaHerramientas, EventosModelo, PresupuestoLlamadas, SoloLectura
 from .observabilidad import ContadorCoste, configurar_observabilidad
 from .politicas import Politica
 from .workflow import (
@@ -62,7 +64,71 @@ def crear_cliente_bc(auditoria: AuditoriaHerramientas | None = None) -> ClienteB
 
 
 def crear_middleware() -> list[Any]:
-    return [AuditoriaHerramientas(), SoloLectura(), PresupuestoLlamadas()]
+    return [AuditoriaHerramientas(), SoloLectura(), PresupuestoLlamadas(), EventosModelo()]
+
+
+# --- eventos de la tarea (registro operativo de la oficina) -------------------------------------
+
+
+def _emitir_aprobacion_solicitada(checkpoint_id: str, solicitud: Any) -> None:
+    lineas = [
+        f"{linea['cantidad']:g} × {linea['numero_articulo']} {linea['descripcion']}"
+        for linea in solicitud.pedido_validado.get("lineas", [])
+    ]
+    eventos.emitir(
+        "aprobacion_solicitada",
+        checkpoint_id=checkpoint_id,
+        cliente=f"{solicitud.numero_cliente or '?'} {solicitud.nombre_cliente or ''}".strip(),
+        importe=solicitud.total,
+        lineas=lineas,
+        motivo="; ".join(solicitud.motivos),
+    )
+
+
+def _emitir_aprobacion_resuelta(checkpoint_id: str, decision: DecisionHumana) -> None:
+    eventos.emitir(
+        "aprobacion_resuelta",
+        checkpoint_id=checkpoint_id,
+        decision="si" if decision.aprobado else "no",
+        aprobador=decision.aprobador,
+        comentario=decision.comentario,
+    )
+
+
+def _tarea_de_la_solicitud(evento: Any) -> str | None:
+    datos = evento.get("data") if isinstance(evento, dict) else getattr(evento, "data", None)
+    return datos.get("tarea") if isinstance(datos, dict) else getattr(datos, "tarea", None)
+
+
+def _totales_de_la_tarea() -> tuple[float, float | None]:
+    """Coste (suma de sus llamadas al modelo) y duración de la tarea, sacados de sus eventos.
+
+    Así una tarea parada y reanudada en otro proceso cuenta su coste y su tiempo completos.
+    """
+    tarea = eventos.tarea_actual()
+    suyos = [e for e in eventos.leer_eventos() if e["tarea"] == tarea]
+    coste = round(sum(e["datos"].get("coste_eur", 0) for e in suyos if e["tipo"] == "modelo_llamada"), 6)
+    inicio = next((e["ts"] for e in suyos if e["tipo"] == "tarea_iniciada"), None)
+    duracion = round((datetime.now().astimezone() - datetime.fromisoformat(inicio)).total_seconds(), 1) if inicio else None
+    return coste, duracion
+
+
+def _terminar_tarea(salidas: list[ResultadoPedido]) -> None:
+    ultima = salidas[-1] if salidas else None
+    coste, duracion = _totales_de_la_tarea()
+    eventos.emitir(
+        "tarea_terminada",
+        resultado=(ultima.estado or ("creado" if ultima.creado else "rechazado")) if ultima else "error",
+        pedido=ultima.numero_pedido if ultima and ultima.creado else None,
+        coste_total_eur=coste,
+        duracion_s=duracion,
+    )
+
+
+def _terminar_con_error(error: BaseException) -> None:
+    eventos.emitir("error", mensaje=eventos.resumir_error(error))
+    coste, duracion = _totales_de_la_tarea()
+    eventos.emitir("tarea_terminada", resultado="error", pedido=None, coste_total_eur=coste, duracion_s=duracion)
 
 
 def cargar_entorno() -> None:
@@ -129,11 +195,22 @@ def imprimir_resultado(resultado: ResultadoPedido) -> None:
 
 
 async def cmd_procesar(ruta_correo: str, modo_aprobacion: str, aprobador: str) -> int:
+    correo = Path(ruta_correo).read_text(encoding="utf-8")
+    # La oficina pasa el id de la tarea que ya ha creado; desde la terminal se genera uno.
+    eventos.fijar_tarea(os.environ.get("AGENTE_TAREA") or eventos.nueva_tarea_id())
+    eventos.emitir("tarea_iniciada", origen=Path(ruta_correo).name, resumen=eventos.resumir_correo(correo))
+    try:
+        return await _procesar(correo, ruta_correo, modo_aprobacion, aprobador)
+    except Exception as error:
+        _terminar_con_error(error)
+        raise
+
+
+async def _procesar(correo: str, ruta_correo: str, modo_aprobacion: str, aprobador: str) -> int:
     middleware = crear_middleware()
     bc = crear_cliente_bc(auditoria=middleware[0])
     storage = crear_storage(os.environ.get("AGENTE_CHECKPOINTS", "checkpoints"))
     piezas = construir_workflow(bc, Politica.desde_entorno(), storage, middleware)
-    correo = Path(ruta_correo).read_text(encoding="utf-8")
 
     print(f"Procesando {ruta_correo} (modelo={os.environ.get('MODELO_PROVEEDOR', 'simulado')}, BC={os.environ.get('BC_MODO', 'demo')})")
     pendiente = None
@@ -151,6 +228,7 @@ async def cmd_procesar(ruta_correo: str, modo_aprobacion: str, aprobador: str) -
         print("\n=== APROBACIÓN NECESARIA ===")
         print(solicitud.resumen)
         checkpoint = await piezas.workflow.resolve_pause_checkpoint_id([pendiente.request_id])
+        _emitir_aprobacion_solicitada(checkpoint, solicitud)
         if modo_aprobacion == "pendiente":
             print(f"\nLa ejecución queda guardada. Para decidir más tarde:\n  python -m agente_pedidos reanudar --checkpoint {checkpoint} --decision si|no --aprobador \"{aprobador}\"")
             print("\nCoste hasta la parada:", piezas.contador.resumen())
@@ -168,6 +246,7 @@ async def cmd_procesar(ruta_correo: str, modo_aprobacion: str, aprobador: str) -
             aprobado = modo_aprobacion == "si"
             comentario = "aprobación automática desde la línea de comandos" if aprobado else "rechazo automático desde la línea de comandos"
         decision = DecisionHumana(aprobado=aprobado, comentario=comentario, aprobador=aprobador)
+        _emitir_aprobacion_resuelta(checkpoint, decision)
         async for evento in piezas.workflow.run(stream=True, responses={pendiente.request_id: decision}):
             if evento.type == "executor_invoked":
                 print(f"  paso: {evento.executor_id}")
@@ -175,6 +254,7 @@ async def cmd_procesar(ruta_correo: str, modo_aprobacion: str, aprobador: str) -
                 salidas.append(evento.data)
         marcar_resuelto(storage, checkpoint, decision)  # ya no es una aprobación pendiente
 
+    _terminar_tarea(salidas)
     for salida in salidas:
         imprimir_resultado(salida)
     print("\nCoste:", piezas.contador.resumen())
@@ -200,13 +280,24 @@ async def cmd_reanudar(checkpoint_id: str, decision_texto: str, comentario: str,
         await bc.cerrar()
         return 1
     decision = DecisionHumana(aprobado=decision_texto == "si", comentario=comentario, aprobador=aprobador)
+    # La tarea sigue siendo la del «procesar» original: su id viaja dentro del checkpoint.
+    tarea = _tarea_de_la_solicitud(checkpoint.pending_request_info_events[pendientes[0]])
+    eventos.fijar_tarea(tarea or eventos.nueva_tarea_id())
+    if tarea is None:  # checkpoint anterior a los eventos: se abre una tarea para no perder el rastro
+        eventos.emitir("tarea_iniciada", origen=f"checkpoint {checkpoint_id}", resumen="Reanudación de una aprobación guardada")
+    _emitir_aprobacion_resuelta(checkpoint_id, decision)
     salidas: list[ResultadoPedido] = []
-    async for evento in piezas.workflow.run(stream=True, checkpoint_id=checkpoint_id, responses={pendientes[0]: decision}):
-        if evento.type == "executor_invoked":
-            print(f"  paso: {evento.executor_id}")
-        elif evento.type == "output":
-            salidas.append(evento.data)
+    try:
+        async for evento in piezas.workflow.run(stream=True, checkpoint_id=checkpoint_id, responses={pendientes[0]: decision}):
+            if evento.type == "executor_invoked":
+                print(f"  paso: {evento.executor_id}")
+            elif evento.type == "output":
+                salidas.append(evento.data)
+    except Exception as error:
+        _terminar_con_error(error)
+        raise
     marcar_resuelto(storage, checkpoint_id, decision)
+    _terminar_tarea(salidas)
     for salida in salidas:
         imprimir_resultado(salida)
     print("\nCoste de esta reanudación:", piezas.contador.resumen())
