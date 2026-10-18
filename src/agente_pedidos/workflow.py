@@ -50,6 +50,7 @@ from . import eventos
 from .agentes import crear_agente_interprete, crear_agente_redactor
 from .bc.base import ClienteBC, ErrorBC, PedidoDuplicado
 from .esquemas import DecisionHumana, LineaInterpretada, LineaValidada, PedidoInterpretado, PedidoValidado, ResultadoPedido
+from .formato import euros
 from .observabilidad import ContadorCoste
 from .politicas import Politica, validar_pedido
 
@@ -287,18 +288,13 @@ class Redactar(Executor):
             f"Resultado: {'pedido creado' if resultado.creado else 'no se ha creado el pedido'}\n"
             f"Número de pedido: {resultado.numero_pedido or '-'}\n"
             f"Cliente: {resultado.numero_cliente or '-'} {resultado.nombre_cliente or ''}\n"
-            f"Total sin impuestos: {resultado.total:.2f}\n"
+            f"Total sin impuestos: {euros(resultado.total)}\n"
             f"Detalle: {resultado.mensaje}"
         )
         respuesta = await self.agente.run(resumen)
         self.contador.registrar(respuesta)
         resultado.respuesta_cliente = respuesta.text or ""
         await ctx.yield_output(resultado)
-
-
-def euros(importe: float) -> str:
-    """5875.6 -> «5.875,60 €»."""
-    return f"{importe:,.2f} €".replace(",", "_").replace(".", ",").replace("_", ".")
 
 
 def _decision_de_politica(validado: PedidoValidado) -> str:

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from .formato import euros
+
 
 class LineaInterpretada(BaseModel):
     texto_original: str = Field(description="Fragmento literal de la petición que describe esta línea")
@@ -65,9 +67,9 @@ class PedidoValidado(BaseModel):
         for linea in self.lineas:
             partes.append(
                 f"  - {linea.cantidad:g} x {linea.numero_articulo} {linea.descripcion} "
-                f"a {linea.precio_unitario:.2f} = {linea.importe:.2f} (existencias: {linea.existencias:g})"
+                f"a {euros(linea.precio_unitario)} = {euros(linea.importe)} (existencias: {linea.existencias:g})"
             )
-        partes.append(f"Total sin impuestos: {self.total:.2f}")
+        partes.append(f"Total sin impuestos: {euros(self.total)}")
         if self.fecha_entrega:
             partes.append(f"Entrega solicitada: {self.fecha_entrega}")
         for aviso in self.avisos:

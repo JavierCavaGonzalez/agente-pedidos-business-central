@@ -38,6 +38,8 @@ from agent_framework import (
 from agent_framework.observability import ChatTelemetryLayer
 from typing_extensions import override
 
+from .formato import euros
+
 PROVEEDORES = ("simulado", "openai", "azure_openai", "foundry")
 
 
@@ -379,7 +381,7 @@ def _redactar(resumen: str) -> str:
 
 def _resumir_creacion(resultado: Any) -> str:
     if isinstance(resultado, dict) and resultado.get("number"):
-        return f"Pedido {resultado['number']} creado para {resultado.get('customerName', '')} por {resultado.get('totalAmountExcludingTax', 0):.2f} sin impuestos."
+        return f"Pedido {resultado['number']} creado para {resultado.get('customerName', '')} por {euros(resultado.get('totalAmountExcludingTax', 0))} sin impuestos."
     return f"No se ha creado el pedido: {resultado}"
 
 

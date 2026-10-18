@@ -29,6 +29,7 @@ from . import eventos
 from .agentes import crear_agente_asistente
 from .bc import ClienteApiV2, ClienteBC, ClienteDemo
 from .esquemas import DecisionHumana, ResultadoPedido
+from .formato import euros
 from .middleware import AuditoriaHerramientas, EventosModelo, PresupuestoLlamadas, SoloLectura
 from .observabilidad import ContadorCoste, configurar_observabilidad
 from .politicas import Politica
@@ -187,7 +188,7 @@ def imprimir_resultado(resultado: ResultadoPedido) -> None:
     if resultado.numero_pedido:
         print("Número de pedido:", resultado.numero_pedido)
     print("Cliente:", resultado.numero_cliente or "-", resultado.nombre_cliente or "")
-    print(f"Total sin impuestos: {resultado.total:.2f}")
+    print(f"Total sin impuestos: {euros(resultado.total)}")
     print("Detalle:", resultado.mensaje)
     print("\n--- Respuesta propuesta al cliente ---")
     print(resultado.respuesta_cliente)

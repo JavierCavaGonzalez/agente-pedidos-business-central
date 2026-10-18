@@ -25,7 +25,7 @@ from datetime import datetime
 from collections.abc import Callable
 from typing import Any
 
-from agente_pedidos.observabilidad import redondear_eur
+from agente_pedidos import formato
 
 SEGUNDOS_RESULTADO = 10
 # Tareas a la vez que cuentan como carga completa de un agente (la barra «Carga» del panel de detalle).
@@ -120,9 +120,7 @@ _HERRAMIENTAS = {
 
 def euros(importe: float | None, decimales: int = 2) -> str:
     """Formato español; los costes del modelo, con 4 decimales (0,0042 € no es «0,00 €»)."""
-    if importe is None:
-        return "—"
-    return f"{redondear_eur(importe, decimales):,} €".replace(",", "_").replace(".", ",").replace("_", ".")
+    return formato.euros(importe, decimales)
 
 
 def describir(evento: dict[str, Any]) -> str | None:
