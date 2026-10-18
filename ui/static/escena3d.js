@@ -14,7 +14,8 @@ const C = {
   azulMarca: "#0a4d7a", tejado: "#1b7cc3", oro: "#fdc308", verde: "#5cbd8b", madera: "#d9ab72", hormigon: "#dfe5ee",
   parcela: "#f1f4f9", suelo: "#e8edf4", tablero: "#dde4ef", ventana: "#3f6c9e", pantalla: "#0a4d7a", goma: "#22344d",
   asfalto: "#cbd5e3", raya: "#ffffff", zonaA: "#c9def0", piel: "#efd3bd", tinta: "#081a30", cielo: "#dfe7ff", rebote: "#f6efe4",
-  apagado: "#c3cedb",
+  apagado: "#c3cedb", contorno: "#7f93ad",
+  tarima: "#eadcc6", salaSuelo: "#e6ecf5", moqueta: "#dce7f3", pasillo: "#f3f6fa",
 };
 export const COLOR_ESTADO = {
   libre: "#9fb3cf", trabajando: "#1f8a5b", esperando_aprobacion: "#e8a825", error: "#c8402f", detenido: "#1270ae",
@@ -69,6 +70,28 @@ function etiqueta(elemento, x, y, z) {
   return objeto;
 }
 
+/** Baldosas de 2 m con una veta muy suave: la textura se dibuja una vez en un lienzo de 128 px y se repite. */
+function texturaBaldosas(repX, repZ) {
+  const lienzo = document.createElement("canvas");
+  lienzo.width = lienzo.height = 128;
+  const g = lienzo.getContext("2d");
+  g.fillStyle = C.suelo;
+  g.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 260; i++) {
+    g.fillStyle = `rgba(8, 26, 48, ${Math.random() * 0.025})`;
+    g.fillRect(Math.random() * 128, Math.random() * 128, 2 + Math.random() * 6, 1 + Math.random() * 2);
+  }
+  g.strokeStyle = "rgba(8, 26, 48, 0.09)";
+  g.lineWidth = 2;
+  g.strokeRect(0, 0, 128, 128);
+  const textura = new THREE.CanvasTexture(lienzo);
+  textura.colorSpace = THREE.SRGBColorSpace;
+  textura.wrapS = textura.wrapT = THREE.RepeatWrapping;
+  textura.repeat.set(repX, repZ);
+  textura.anisotropy = 4;
+  return textura;
+}
+
 // --- piezas de la oficina -------------------------------------------------------------------------
 
 function planta(config) {
@@ -76,13 +99,15 @@ function planta(config) {
   const { ancho, fondo } = config.planta;
   // Parcela (el papel de la maqueta), suelo de la oficina con su rejilla y muros del fondo (corte de diorama)
   grupo.add(caja(ancho + 11.5, 0.3, fondo + 2, mate(C.parcela), 5.25, -0.3, 0, { radio: 0.12, sombra: false }));
-  grupo.add(caja(ancho, 0.25, fondo, mate(C.suelo), 0, 0, 0, { aristas: true, radio: 0.06, sombra: false }));
-  const rejilla = [];
-  for (let x = -ancho / 2 + 2; x < ancho / 2; x += 2) rejilla.push(x, 0.252, -fondo / 2, x, 0.252, fondo / 2);
-  for (let z = -fondo / 2 + 2; z < fondo / 2; z += 2) rejilla.push(-ancho / 2, 0.252, z, ancho / 2, 0.252, z);
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.Float32BufferAttribute(rejilla, 3));
-  grupo.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: C.tinta, transparent: true, opacity: 0.06 })));
+  const suelo = caja(ancho, 0.25, fondo, [mate(C.suelo), mate(C.suelo), new THREE.MeshLambertMaterial({ map: texturaBaldosas(ancho / 2, fondo / 2) }), mate(C.suelo), mate(C.suelo), mate(C.suelo)], 0, 0, 0, { aristas: true, radio: 0, sombra: false });
+  grupo.add(suelo);
+  // Zonas: despacho (tarima), sala de reuniones, área de trabajo (moqueta) y pasillo hasta Business Central
+  const zona = (x0, x1, z0, z1, color) => grupo.add(caja(x1 - x0, 0.012, z1 - z0, mate(color), (x0 + x1) / 2, 0.25, (z0 + z1) / 2, { radio: 0, sombra: false }));
+  zona(-11.75, -5, -7.75, -1.4, C.tarima);
+  zona(-11.75, -5, 1.4, 7.75, C.salaSuelo);
+  zona(-3.4, 9.6, -6.3, -1.1, C.moqueta);
+  zona(-3.4, 9.6, 1.1, 6.3, C.moqueta);
+  zona(-5, 12, -0.7, 0.7, C.pasillo);
 
   const alto = 2.3, grueso = 0.25;
   grupo.add(caja(ancho, alto, grueso, mate(C.muro), 0, 0.25, -fondo / 2 + grueso / 2, { aristas: true }));
@@ -135,22 +160,101 @@ function planta_maceta(x, z, alto = 1.2) {
   return grupo;
 }
 
-/** Mesa de trabajo: tablero, faldón, monitor y teclado. El agente se sienta detrás, mirando a la cámara. */
-function mesa(atenuada) {
+/** Mesa del agente activo: tablero, faldón, monitor encendido (su pantalla dice el estado), teclado, taza, papeles,
+ * lámpara y una planta. El agente se sienta en el lado -z mirando a +z; la mesa se gira para que la cámara vea la pantalla. */
+function mesaActiva() {
   const grupo = new THREE.Group();
-  const op = atenuada ? { transparent: true, opacity: 0.55 } : {};
-  grupo.add(caja(2.6, 0.08, 1.3, mate(atenuada ? C.hormigon : C.blanco, op), 0, 0.98, 0, { aristas: !atenuada }));
-  grupo.add(caja(2.5, 0.62, 0.06, mate(C.acero, op), 0, 0.36, 0.55));
-  grupo.add(caja(0.06, 0.73, 1.2, mate(C.acero, op), -1.2, 0.25, 0));
-  grupo.add(caja(0.06, 0.73, 1.2, mate(C.acero, op), 1.2, 0.25, 0));
+  grupo.add(caja(2.6, 0.08, 1.3, mate(C.blanco), 0, 0.98, 0, { aristas: true }));
+  grupo.add(caja(2.5, 0.62, 0.06, mate(C.acero), 0, 0.36, 0.55));
+  grupo.add(caja(0.06, 0.73, 1.2, mate(C.acero), -1.2, 0.25, 0));
+  grupo.add(caja(0.06, 0.73, 1.2, mate(C.acero), 1.2, 0.25, 0));
+  // Monitor: carcasa, peana y pantalla (lienzo que se redibuja al cambiar el estado)
   const monitor = new THREE.Group();
-  monitor.add(caja(1.05, 0.62, 0.06, mate(C.oscuro, op), 0, 0.2, 0));
-  monitor.add(caja(0.08, 0.2, 0.08, mate(C.acero, op), 0, 0, 0.03));
-  // A un lado y girado hacia el agente, para que se le vea la cara desde la cámara
-  monitor.position.set(-0.72, 1.06, 0.05);
-  monitor.rotation.y = 0.5;
+  monitor.add(caja(1.2, 0.72, 0.06, mate(C.oscuro), 0, 0.22, 0));
+  monitor.add(caja(0.08, 0.24, 0.08, mate(C.acero), 0, 0, 0.04));
+  monitor.add(caja(0.42, 0.03, 0.26, mate(C.acero), 0, 0, 0.04, { radio: 0.01 }));
+  const lienzo = document.createElement("canvas");
+  lienzo.width = 256;
+  lienzo.height = 150;
+  const textura = new THREE.CanvasTexture(lienzo);
+  textura.colorSpace = THREE.SRGBColorSpace;
+  const pantalla = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.62), new THREE.MeshBasicMaterial({ map: textura }));
+  pantalla.position.set(0, 0.58, -0.035);
+  pantalla.rotation.y = Math.PI; // mira al agente (lado -z)
+  monitor.add(pantalla);
+  monitor.position.set(-0.55, 1.06, 0.2);
+  monitor.rotation.y = -0.35;
   grupo.add(monitor);
-  if (!atenuada) grupo.add(caja(0.7, 0.03, 0.22, mate(C.hormigon), 0.2, 1.06, -0.28, { radio: 0.01 }));
+  // Teclado y ratón delante del agente, taza, papeles, lámpara y planta
+  grupo.add(caja(0.72, 0.03, 0.24, mate(C.hormigon), 0.25, 1.06, -0.3, { radio: 0.01 }));
+  grupo.add(caja(0.1, 0.03, 0.15, mate(C.hormigon), 0.78, 1.06, -0.3, { radio: 0.01 }));
+  grupo.add(cilindro(0.07, 0.14, mate(C.muro), 0.95, 1.06, 0.1, 12));
+  grupo.add(caja(0.42, 0.06, 0.32, mate(C.muro), 0.72, 1.06, 0.3, { radio: 0.01 }));
+  grupo.add(caja(0.42, 0.02, 0.32, mate(C.zonaA), 0.74, 1.12, 0.29, { radio: 0 }));
+  grupo.add(cilindro(0.11, 0.04, mate(C.acero), 1.05, 1.06, -0.4, 12));
+  const brazo = cilindro(0.025, 0.55, mate(C.acero), 1.05, 1.08, -0.4, 6);
+  brazo.rotation.z = 0.25;
+  grupo.add(brazo);
+  const tulipa = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.18, 14, 1, true), mate(C.oro, { side: THREE.DoubleSide }));
+  tulipa.position.set(0.92, 1.66, -0.4);
+  tulipa.rotation.z = 0.9;
+  grupo.add(tulipa);
+  const maceta = cilindro(0.09, 0.14, mate(C.hormigon), -1.08, 1.06, -0.35, 10);
+  const hojas = new THREE.Mesh(new THREE.IcosahedronGeometry(0.15, 0), mate(C.verde, { flatShading: true }));
+  hojas.position.set(-1.08, 1.32, -0.35);
+  grupo.add(maceta, hojas);
+  return { grupo, lienzo, textura };
+}
+
+/** Lo que muestra la pantalla del agente según su estado: líneas de trabajo, el aviso de aprobación o el error. */
+function pintarPantalla(lienzo, textura, estado) {
+  const g = lienzo.getContext("2d");
+  const { width: w, height: h } = lienzo;
+  const fondo = estado === "detenido" ? "#34547c" : estado === "libre" ? "#0e5f96" : "#f4f6f9";
+  g.fillStyle = fondo;
+  g.fillRect(0, 0, w, h);
+  if (estado === "libre" || estado === "detenido") {
+    g.fillStyle = "rgba(255,255,255,0.85)";
+    for (const [x, y, a] of [[96, 58, 18], [118, 46, 30], [140, 34, 42]]) g.fillRect(x, y + (42 - a), 16, a); // las barras del logotipo
+    g.fillStyle = "rgba(255,255,255,0.5)";
+    g.fillRect(88, 106, 80, 4);
+  } else {
+    const color = { trabajando: "#1f8a5b", esperando_aprobacion: "#e8a825", error: "#c8402f" }[estado] || "#1270ae";
+    g.fillStyle = color;
+    g.fillRect(0, 0, w, 30);
+    g.fillStyle = "#ffffff";
+    g.font = "bold 18px sans-serif";
+    g.fillText({ trabajando: "Procesando pedido", esperando_aprobacion: "Aprobación pendiente", error: "Error" }[estado] || "", 12, 21);
+    g.fillStyle = "rgba(8, 26, 48, 0.18)";
+    for (let i = 0; i < 6; i++) g.fillRect(14, 44 + i * 17, [180, 140, 200, 120, 170, 90][i], 7);
+    if (estado === "esperando_aprobacion") {
+      g.fillStyle = "#e8a825";
+      g.fillRect(170, 112, 72, 26);
+    }
+  }
+  textura.needsUpdate = true;
+}
+
+/** Mesa vacante: solo su contorno punteado (tablero, monitor y silla) y la huella en el suelo, atenuados. */
+function mesaVacante() {
+  const grupo = new THREE.Group();
+  const material = new THREE.LineDashedMaterial({ color: C.contorno, dashSize: 0.12, gapSize: 0.08, transparent: true, opacity: 0.8 });
+  const contorno = (w, h, d, x, y, z) => {
+    const lineas = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(w, h, d)), material);
+    lineas.position.set(x, y + h / 2, z);
+    lineas.computeLineDistances();
+    grupo.add(lineas);
+  };
+  contorno(2.6, 0.08, 1.3, 0, 0.98, 0);
+  contorno(2.5, 0.62, 0.06, 0, 0.36, 0.55);
+  contorno(1.05, 0.62, 0.06, -0.55, 1.26, 0.2);
+  contorno(0.62, 0.1, 0.58, 0, 0.67, -0.95);
+  contorno(0.62, 0.62, 0.1, 0, 0.77, -1.25);
+  contorno(3.2, 0.001, 2.6, 0, 0.26, -0.3);
+  // Volumen invisible para poder pulsarla
+  const tacto = new THREE.Mesh(new THREE.BoxGeometry(2.8, 1.2, 2.4), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, colorWrite: false }));
+  tacto.position.set(0, 0.85, -0.3);
+  grupo.add(tacto);
   return grupo;
 }
 
@@ -325,19 +429,27 @@ export function montarEscena(contenedor, config, { alElegir }) {
   for (const m of config.mesas) {
     const ocupada = Boolean(m.agente);
     const grupo = new THREE.Group();
-    grupo.add(mesa(!ocupada));
-    grupo.add(silla(0, -0.95, 0, ocupada ? C.oscuro : C.apagado));
-    const aro = anillo(1.85, 2.0, COLOR_ESTADO.libre, ocupada ? 0.55 : 0.18);
-    aro.position.y = 0.26;
+    let puesto = null;
+    if (ocupada) {
+      puesto = mesaActiva();
+      grupo.add(puesto.grupo, silla(0.25, -0.95, 0, C.oscuro));
+      pintarPantalla(puesto.lienzo, puesto.textura, "libre");
+    } else {
+      grupo.add(mesaVacante());
+    }
+    // La mesa se gira para que el agente quede de espaldas a la cámara y se vea su pantalla
+    grupo.rotation.y = Math.PI;
+    const aro = anillo(1.85, 2.0, COLOR_ESTADO.libre, ocupada ? 0.55 : 0);
+    aro.position.y = 0.285;
     const elegido = anillo(2.08, 2.3, C.oro, 0.95);
-    elegido.position.y = 0.262;
+    elegido.position.y = 0.29;
     elegido.visible = false;
     grupo.add(aro, elegido);
     const seleccion = ocupada ? { tipo: "agente", id: m.agente } : { tipo: "vacante", id: m.id };
     let figura = null;
     if (ocupada) {
       figura = robot();
-      figura.grupo.position.set(0.2, 0, -0.95);
+      figura.grupo.position.set(0.25, 0, -0.95);
       figura.grupo.scale.setScalar(1.12);
       grupo.add(figura.grupo);
     }
@@ -345,8 +457,8 @@ export function montarEscena(contenedor, config, { alElegir }) {
     escena.add(grupo);
     marcar(grupo, seleccion);
     const nodo = capaEtiqueta(`${seleccion.tipo}:${seleccion.id}`, ocupada ? "agente" : "vacante", () => alElegir(seleccion));
-    grupo.add(etiqueta(nodo, 0, ocupada ? 2.7 : 1.25, ocupada ? -0.9 : 0));
-    mesas.set(seleccion.id, { m, grupo, aro, elegido, figura, seleccion, estado: "libre", camino: ocupada ? caminoHaciaBC(m, bc) : null });
+    grupo.add(etiqueta(nodo, 0, ocupada ? 2.75 : 1.6, ocupada ? -0.6 : 0));
+    mesas.set(seleccion.id, { m, grupo, aro, elegido, figura, puesto, seleccion, estado: null, camino: ocupada ? caminoHaciaBC(m, bc) : null });
   }
 
   // Camino de cada mesa ocupada hasta Business Central: línea de puntos azul y, al crear un pedido, un punto de oro
@@ -381,11 +493,11 @@ export function montarEscena(contenedor, config, { alElegir }) {
     nodo.append(linea);
     escena.add(etiqueta(nodo, x, 0.3, z));
   };
-  zona("Sala de reuniones", r.x + 1.2, r.z + 3.1);
+  zona("Sala de reuniones", r.x + 2.4, r.z + 2.4);
 
   // --- cámara: ortográfica, isometría a 30°, que solo se mueve si la mueve la persona ---
   const camara = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 400);
-  const objetivo = new THREE.Vector3(3.2, 0, 0);
+  const objetivo = new THREE.Vector3(2.6, 0, -0.6);
   const controles = new OrbitControls(camara, renderer.domElement);
   controles.target.copy(objetivo);
   controles.enableDamping = true;
@@ -398,7 +510,8 @@ export function montarEscena(contenedor, config, { alElegir }) {
   controles.minAzimuthAngle = AZIMUT - 0.7;
   controles.maxAzimuthAngle = AZIMUT + 0.7;
 
-  const caja3 = new THREE.Box3(new THREE.Vector3(-12.2, 0, -8.2), new THREE.Vector3(bc.x + 2.2, 3.4, 8.2));
+  // Encuadre inicial: la oficina y Business Central, sin los márgenes de la parcela; las esquinas del fondo pueden salir
+  const caja3 = new THREE.Box3(new THREE.Vector3(-10.5, 0, -7.6), new THREE.Vector3(bc.x + 1.6, 2.4, 7.2));
   function vistaInicial() {
     const distancia = 60;
     camara.position.set(
@@ -424,7 +537,7 @@ export function montarEscena(contenedor, config, { alElegir }) {
       const p = new THREE.Vector3(x, y, z).applyMatrix4(inversa);
       minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
     }
-    const margen = 1.02, cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    const margen = 0.98, cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
     let medioAncho = ((maxX - minX) / 2) * margen, medioAlto = ((maxY - minY) / 2) * margen + 0.4; // sitio para las etiquetas
     if (medioAncho / medioAlto > ancho / alto) medioAlto = medioAncho * (alto / ancho);
     else medioAncho = medioAlto * (ancho / alto);
@@ -470,7 +583,7 @@ export function montarEscena(contenedor, config, { alElegir }) {
     if (clave === pasando) return;
     pasando = clave;
     renderer.domElement.style.cursor = s ? "pointer" : "grab";
-    for (const [id, mesaRef] of mesas) mesaRef.aro.material.opacity = mesaRef.seleccion.id === s?.id ? 0.95 : mesaRef.figura ? 0.55 : 0.18;
+    for (const [id, mesaRef] of mesas) mesaRef.aro.material.opacity = mesaRef.seleccion.id === s?.id ? 0.95 : mesaRef.figura ? 0.55 : 0.35;
   });
   renderer.domElement.addEventListener("pointerdown", (e) => (abajo = [e.clientX, e.clientY]));
   renderer.domElement.addEventListener("pointerup", (e) => {
@@ -509,7 +622,7 @@ export function montarEscena(contenedor, config, { alElegir }) {
       } else if (ref.estado === "esperando_aprobacion") {
         f.izquierdo.rotation.x = -0.9;
         f.derecho.rotation.z = 2.75 + Math.sin(t * 3.2) * 0.14 * onda; // la mano levantada
-        f.cabeza.rotation.y = -0.25;
+        f.cabeza.rotation.y = 0.7;
         f.baliza.scale.setScalar(1 + (Math.sin(t * 4) * 0.25 + 0.25) * onda);
       } else if (ref.estado === "error") {
         f.izquierdo.rotation.x = f.derecho.rotation.x = -0.3;
@@ -548,6 +661,7 @@ export function montarEscena(contenedor, config, { alElegir }) {
       for (const a of agentes) {
         const ref = mesas.get(a.id);
         if (!ref) continue;
+        if (ref.estado !== a.estado) pintarPantalla(ref.puesto.lienzo, ref.puesto.textura, a.estado);
         ref.estado = a.estado;
         const color = COLOR_ESTADO[a.estado] || COLOR_ESTADO.libre;
         ref.aro.material.color.set(color);
