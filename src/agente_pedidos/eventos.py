@@ -11,7 +11,8 @@ vivo. Nunca lleva secretos: los argumentos y los errores se resumen antes de esc
 
 Tipos: ``tarea_iniciada``, ``paso``, ``modelo_llamada``, ``herramienta``,
 ``aprobacion_solicitada``, ``aprobacion_resuelta``, ``erp_escritura``, ``erp_bloqueada``,
-``tarea_terminada``, ``error`` y, desde la oficina, ``agente_detenido`` y ``agente_activado``.
+``tarea_terminada``, ``error``, ``respuesta_agente`` (comando ``chat``) y, desde la oficina,
+``agente_detenido`` y ``agente_activado``.
 
 La tarea en curso viaja en una ``ContextVar`` (``fijar_tarea``): la CLI la fija al empezar y
 el workflow y el middleware la leen sin tener que pasarla de mano en mano.
@@ -44,6 +45,7 @@ TIPOS = (
     "error",
     "agente_detenido",
     "agente_activado",
+    "respuesta_agente",
 )
 
 _TAREA: ContextVar[str | None] = ContextVar("tarea", default=None)
@@ -111,6 +113,12 @@ def leer_eventos(ruta: Path | None = None, dia: date | None = None) -> list[dict
 
 
 # --- resúmenes sin datos sensibles -------------------------------------------------------------
+
+
+def resumir_respuesta(texto: str, max_caracteres: int = 400) -> str:
+    """La respuesta del agente en una línea, sin direcciones de correo y recortada."""
+    plano = " ".join(_CORREO.sub("[correo]", texto or "").split())
+    return plano if len(plano) <= max_caracteres else plano[: max_caracteres - 1] + "…"
 
 
 def resumir_correo(texto: str, max_caracteres: int = 160) -> str:

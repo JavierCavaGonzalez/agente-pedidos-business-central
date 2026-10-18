@@ -143,3 +143,14 @@ async def test_la_oficina_no_resuelve_una_aprobacion_de_otro_modo_de_erp(oficina
     monkeypatch.setenv("BC_MODO", "api")
     respuesta = oficina.post(f"/api/aprobaciones/{aprobacion['checkpoint_id']}", json={"decision": "si", "aprobador": "Javier"})
     assert respuesta.status_code == 409 and "BC_MODO=demo" in respuesta.json()["detail"]
+
+
+def test_la_foto_trae_los_paneles_y_preguntar_valida_el_agente(oficina, monkeypatch):
+    monkeypatch.setenv("OFICINA_PRESUPUESTO_DIA_EUR", "0,50")
+    foto = oficina.get("/api/estado").json()
+    assert (foto["feed"], foto["pedidos"], foto["presupuesto_dia_eur"]) == ([], [], 0.5)
+    assert (foto["erp"]["modo"], foto["erp"]["entorno"], foto["erp"]["enlace"]) == ("demo", "Simulación", None)
+    agente = foto["agentes"][0]
+    assert (agente["herramientas"], agente["tareas_en_curso"], agente["capacidad"]) == ([], 0, 3)
+    assert oficina.post("/api/preguntas", json={"agente": "compras", "mensaje": "hola"}).status_code == 404
+    assert oficina.post("/api/preguntas", json={"agente": "pedidos", "mensaje": ""}).status_code == 422

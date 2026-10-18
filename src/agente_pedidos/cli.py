@@ -328,7 +328,26 @@ async def cmd_pendientes() -> int:
 
 
 async def cmd_chat(mensaje: str, aprobador: str) -> int:
-    """Variante conversacional: aprobación a nivel de agente (approval_mode) en lugar de workflow."""
+    """Variante conversacional: aprobación a nivel de agente (approval_mode) en lugar de workflow.
+
+    Deja rastro en eventos como una tarea de clase «pregunta» (la oficina la muestra en el feed
+    con su respuesta y su coste).
+    """
+    eventos.fijar_tarea(os.environ.get("AGENTE_TAREA") or eventos.nueva_tarea_id())
+    origen = os.environ.get("AGENTE_ORIGEN") or "chat"
+    eventos.emitir("tarea_iniciada", origen=origen, clase="pregunta", resumen=eventos.resumir_correo(mensaje))
+    try:
+        texto = await _chat(mensaje, aprobador)
+    except Exception as error:
+        _terminar_con_error(error)
+        raise
+    coste, duracion = _totales_de_la_tarea()
+    eventos.emitir("respuesta_agente", texto=eventos.resumir_respuesta(texto), coste_eur=coste)
+    eventos.emitir("tarea_terminada", resultado="respondido", pedido=None, coste_total_eur=coste, duracion_s=duracion)
+    return 0
+
+
+async def _chat(mensaje: str, aprobador: str) -> str:
     middleware = crear_middleware()
     bc = crear_cliente_bc(auditoria=middleware[0])
     agente = crear_agente_asistente(bc, middleware)
@@ -354,7 +373,7 @@ async def cmd_chat(mensaje: str, aprobador: str) -> int:
     print("\n" + (respuesta.text or ""))
     print("\nCoste:", contador.resumen())
     await bc.cerrar()
-    return 0
+    return respuesta.text or ""
 
 
 async def cmd_demo(aprobador: str) -> int:

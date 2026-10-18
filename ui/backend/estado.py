@@ -22,11 +22,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from collections.abc import Callable
 from typing import Any
 
 from agente_pedidos.observabilidad import redondear_eur
 
 SEGUNDOS_RESULTADO = 10
+# Tareas a la vez que cuentan como carga completa de un agente (la barra «Carga» del panel de detalle).
+CAPACIDAD_POR_AGENTE = 3
+# Presupuesto de coste del modelo por día si no se indica OFICINA_PRESUPUESTO_DIA_EUR.
+PRESUPUESTO_DIA_EUR = 1.0
+LIMITE_FEED = 80
 
 AGENTES: list[dict[str, str]] = [
     {"id": "pedidos", "nombre": "Agente de Pedidos", "rol": "Ventas"},
@@ -123,6 +129,8 @@ def describir(evento: dict[str, Any]) -> str | None:
     """Frase legible para un evento, o ``None`` si no merece bocadillo (p. ej. una llamada al modelo)."""
     tipo, datos = evento["tipo"], evento["datos"]
     if tipo == "tarea_iniciada":
+        if datos.get("clase") == "pregunta":
+            return f"Pregunta: {datos.get('resumen') or '…'}"
         return f"Nueva tarea: {datos.get('origen') or 'correo'}"
     if tipo == "paso":
         return datos.get("descripcion") or datos.get("nombre")
@@ -148,7 +156,7 @@ def describir(evento: dict[str, Any]) -> str | None:
         resultado = datos.get("resultado")
         if resultado == "creado":
             return f"Hecho: pedido {datos.get('pedido')} · coste {euros(datos.get('coste_total_eur'), 4)}"
-        return {"rechazado": "Terminado: pedido rechazado", "denegado": "Terminado: pedido denegado", "error": "Terminado con error"}.get(resultado, f"Terminado: {resultado}")
+        return {"respondido": "Terminado: respuesta dada", "rechazado": "Terminado: pedido rechazado", "denegado": "Terminado: pedido denegado", "error": "Terminado con error"}.get(resultado, f"Terminado: {resultado}")
     return None
 
 
@@ -259,13 +267,34 @@ def foto(
     modo_erp: str,
     modelo: str,
     detenidos: dict[str, str] | None = None,
+    erp: dict[str, Any] | None = None,
+    enlace_pedido: Callable[[str | None], str | None] | None = None,
+    presupuesto_dia_eur: float = PRESUPUESTO_DIA_EUR,
 ) -> dict[str, Any]:
-    """Todo lo que la interfaz necesita para dibujar la oficina en un instante."""
+    """Todo lo que la interfaz necesita para dibujar la oficina en un instante.
+
+    ``erp`` describe Business Central (modo, entorno, empresa, enlace) y ``enlace_pedido`` da el
+    enlace profundo de un pedido (``None`` en simulación); los dos los pone el backend.
+    """
     pendientes_por_agente: dict[str, int] = {}
     for aprobacion in aprobaciones:
         pendientes_por_agente[aprobacion["agente"]] = pendientes_por_agente.get(aprobacion["agente"], 0) + 1
     agentes = estado_agentes(eventos_hoy, ahora, pendientes_por_agente, detenidos)
-    tareas = sorted((t.resumen_publico() for t in agrupar_tareas(eventos_hoy).values()), key=lambda t: t["inicio"] or "", reverse=True)
+    grupos = agrupar_tareas(eventos_hoy)
+    tareas = sorted(
+        ({**t.resumen_publico(), "seguimiento": seguimiento(t, ahora)} for t in grupos.values()),
+        key=lambda t: t["inicio"] or "",
+        reverse=True,
+    )
+    pedidos = pedidos_de_hoy(eventos_hoy, grupos, enlace_pedido or (lambda _numero: None))
+    for agente in agentes:
+        suyos = [e for e in eventos_hoy if e["agente"] == agente["id"]]
+        agente["herramientas"] = herramientas(suyos)
+        agente["tareas_en_curso"] = sum(1 for t in grupos.values() if t.agente == agente["id"] and t.abierta)
+        agente["capacidad"] = CAPACIDAD_POR_AGENTE
+        agente["llamadas_modelo_hoy"] = sum(1 for e in suyos if e["tipo"] == "modelo_llamada")
+        agente["pedidos_hoy"] = [p for p in pedidos if p["agente"] == agente["id"]]
+    escrituras = [e for e in eventos_hoy if e["tipo"] == "erp_escritura"]
     return {
         "ahora": ahora.isoformat(timespec="seconds"),
         "modo_erp": modo_erp,
@@ -274,7 +303,202 @@ def foto(
         "tareas": tareas,
         "aprobaciones": aprobaciones,
         "tablero": tablero(eventos_hoy, agentes, len(aprobaciones)),
+        "pedidos": pedidos,
+        "feed": feed(eventos_hoy),
+        "erp": {
+            **(erp or {"modo": modo_erp}),
+            "escrituras_hoy": len(escrituras),
+            "bloqueadas_hoy": sum(1 for e in eventos_hoy if e["tipo"] == "erp_bloqueada"),
+            "ultima_escritura": {"ts": escrituras[-1]["ts"], "pedido": escrituras[-1]["datos"].get("pedido")} if escrituras else None,
+        },
+        "presupuesto_dia_eur": presupuesto_dia_eur,
     }
+
+
+# --- seguimiento de una tarea, pedidos del día y feed ---------------------------------------------
+
+# La línea de pasos del panel «Seguimiento de tarea». Cada evento abre un paso.
+PASOS_SEGUIMIENTO: list[tuple[str, str]] = [
+    ("recibido", "Recibido"),
+    ("interpretado", "Interpretado"),
+    ("validado", "Validado"),
+    ("aprobacion", "Aprobación"),
+    ("creado", "Creado en BC"),
+    ("respondido", "Respondido"),
+]
+_PASO_DE_EVENTO = {
+    ("tarea_iniciada", None): "recibido",
+    ("paso", "interpretar"): "interpretado",
+    ("paso", "validar"): "validado",
+    ("paso", "politica"): "validado",
+    ("paso", "aprobacion_humana"): "aprobacion",
+    ("aprobacion_solicitada", None): "aprobacion",
+    ("paso", "crear_pedido"): "creado",
+    ("erp_escritura", None): "creado",
+    ("paso", "redactar"): "respondido",
+}
+
+
+def seguimiento(tarea: Tarea, ahora: datetime) -> dict[str, Any] | None:
+    """Pasos de una tarea de pedido (Recibido → … → Respondido) con su estado y su tiempo.
+
+    Estados de un paso: ``hecho``, ``actual``, ``pendiente``, ``omitido`` (no hacía falta, p. ej.
+    la aprobación de un pedido pequeño) y ``fallido`` (rechazado, denegado o error). El tiempo de
+    un paso va de su primer evento al del paso siguiente. Una pregunta al agente no es un pedido:
+    no tiene seguimiento (``None``).
+    """
+    if any(e["tipo"] == "tarea_iniciada" and e["datos"].get("clase") == "pregunta" for e in tarea.eventos):
+        return None
+    claves = [c for c, _ in PASOS_SEGUIMIENTO]
+    inicio: dict[str, str] = {}
+    notas: dict[str, str] = {}
+    fallidos: set[str] = set()
+    actual = "recibido"
+    cliente, total, lineas = None, None, []
+    for evento in tarea.eventos:
+        tipo, datos = evento["tipo"], evento["datos"]
+        clave = _PASO_DE_EVENTO.get((tipo, datos.get("nombre") if tipo == "paso" else None))
+        if clave:
+            inicio.setdefault(clave, evento["ts"])
+            if claves.index(clave) >= claves.index(actual):
+                actual = clave
+        if tipo == "paso" and datos.get("nombre") == "politica":
+            cliente, total, lineas = datos.get("cliente") or cliente, datos.get("total", total), datos.get("lineas") or lineas
+            if datos.get("descripcion", "").startswith("Dentro de la política"):
+                notas["aprobacion"] = "No hacía falta"
+        elif tipo == "aprobacion_solicitada":
+            cliente = cliente or datos.get("cliente")
+            total = total if total is not None else datos.get("importe")
+            lineas = lineas or [{"descripcion": linea} for linea in datos.get("lineas", [])]
+        elif tipo == "aprobacion_resuelta":
+            aprobado = datos.get("decision") == "si"
+            notas["aprobacion"] = f"{'Aprobado' if aprobado else 'Denegado'} por {datos.get('aprobador') or 'el director'}"
+            if not aprobado:
+                fallidos.add("aprobacion")
+        elif tipo == "erp_escritura":
+            notas["creado"] = f"Pedido {datos.get('pedido')}"
+        elif tipo == "paso" and datos.get("nombre") == "rechazar" and "aprobacion" not in fallidos:
+            fallidos.add("validado")
+            notas["validado"] = datos.get("descripcion") or "Rechazado"
+        elif tipo == "error":
+            fallidos.add(actual)
+            notas[actual] = datos.get("mensaje") or "Error"
+    terminada = tarea.fin is not None
+    empezados = [c for c in claves if c in inicio]
+    pasos = []
+    for i, (clave, etiqueta) in enumerate(PASOS_SEGUIMIENTO):
+        if clave in fallidos:
+            situacion = "fallido"
+        elif clave == actual and not terminada:
+            situacion = "actual"
+        elif clave in inicio:
+            situacion = "hecho"
+        elif terminada or i < claves.index(actual):
+            situacion = "omitido"
+        else:
+            situacion = "pendiente"
+        duracion = None
+        if clave in inicio:
+            siguientes = [inicio[c] for c in empezados if claves.index(c) > i]
+            fin = siguientes[0] if siguientes else (tarea.fin["ts"] if terminada else None)
+            hasta = datetime.fromisoformat(fin) if fin else ahora
+            duracion = max(0.0, round((hasta - datetime.fromisoformat(inicio[clave])).total_seconds(), 1))
+        pasos.append({"clave": clave, "etiqueta": etiqueta, "estado": situacion, "inicio": inicio.get(clave), "duracion_s": duracion, "nota": notas.get(clave)})
+    return {"pasos": pasos, "actual": None if terminada else actual, "cliente": cliente, "total": total, "lineas": lineas}
+
+
+def pedidos_de_hoy(eventos: list[dict[str, Any]], tareas: dict[str, Tarea], enlace: Callable[[str | None], str | None]) -> list[dict[str, Any]]:
+    """Pedidos creados hoy (eventos ``erp_escritura``), el más reciente primero, con su enlace a BC."""
+    pedidos = []
+    for evento in eventos:
+        if evento["tipo"] != "erp_escritura":
+            continue
+        datos = evento["datos"]
+        tarea = tareas.get(evento.get("tarea") or "")
+        nombre = (seguimiento(tarea, datetime.fromisoformat(evento["ts"])) or {}).get("cliente") if tarea else None
+        pedidos.append(
+            {
+                "pedido": datos.get("pedido"),
+                "cliente": nombre or datos.get("cliente"),
+                "importe": datos.get("importe"),
+                # El agente crea pedidos abiertos: ni los lanza ni los registra.
+                "estado_bc": "Abierto",
+                "modo": datos.get("modo"),
+                "ts": evento["ts"],
+                "tarea": evento.get("tarea"),
+                "agente": evento["agente"],
+                "enlace": enlace(datos.get("pedido")) if datos.get("modo") == "api" else None,
+            }
+        )
+    return list(reversed(pedidos))
+
+
+def herramientas(eventos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Herramientas usadas: llamadas y errores (un resultado distinto de «ok» es un error)."""
+    cuenta: dict[str, dict[str, Any]] = {}
+    for evento in eventos:
+        if evento["tipo"] != "herramienta":
+            continue
+        nombre = evento["datos"].get("nombre") or "?"
+        fila = cuenta.setdefault(nombre, {"nombre": nombre, "llamadas": 0, "errores": 0})
+        fila["llamadas"] += 1
+        fila["errores"] += int(evento["datos"].get("resultado") != "ok")
+    return sorted(cuenta.values(), key=lambda f: -f["llamadas"])
+
+
+_CATEGORIA = {
+    "erp_escritura": "bc",
+    "erp_bloqueada": "bc",
+    "herramienta": "bc",
+    "aprobacion_solicitada": "aprobaciones",
+    "aprobacion_resuelta": "aprobaciones",
+    "modelo_llamada": "modelo",
+}
+
+
+def describir_feed(evento: dict[str, Any]) -> str | None:
+    """Frase del feed de actividad: la del bocadillo y, además, llamadas al modelo y respuestas."""
+    tipo, datos = evento["tipo"], evento["datos"]
+    if tipo == "modelo_llamada":
+        tokens = (datos.get("tokens_entrada") or 0) + (datos.get("tokens_salida") or 0)
+        miles = f"{tokens:,}".replace(",", ".")
+        return f"Llamada al modelo · {miles} tokens · {euros(datos.get('coste_eur'), 4)}"
+    if tipo == "erp_escritura":
+        return f"Pedido {datos.get('pedido')} creado · {euros(datos.get('importe'))}"
+    if tipo == "aprobacion_solicitada":
+        return f"Aprobación solicitada · {euros(datos.get('importe'))} · {datos.get('motivo') or datos.get('cliente')}"
+    if tipo == "agente_detenido":
+        return "Detenido por el director"
+    if tipo == "agente_activado":
+        return "Activado por el director"
+    if tipo == "respuesta_agente":
+        return f"Respuesta: {datos.get('texto') or '(vacía)'}"
+    return describir(evento)
+
+
+def feed(eventos: list[dict[str, Any]], limite: int = LIMITE_FEED) -> list[dict[str, Any]]:
+    """Los últimos eventos del día como frases, el más reciente primero, con su categoría para filtrar."""
+    filas = []
+    for evento in reversed(eventos):
+        texto = describir_feed(evento)
+        if not texto:
+            continue
+        datos = evento["datos"]
+        filas.append(
+            {
+                "ts": evento["ts"],
+                "tipo": evento["tipo"],
+                "categoria": _CATEGORIA.get(evento["tipo"], "tareas"),
+                "agente": evento["agente"],
+                "tarea": evento.get("tarea"),
+                "texto": texto,
+                "coste_eur": datos.get("coste_eur") if evento["tipo"] == "respuesta_agente" else None,
+                "error": evento["tipo"] in ("error", "erp_bloqueada") or (evento["tipo"] == "herramienta" and datos.get("resultado") != "ok"),
+            }
+        )
+        if len(filas) >= limite:
+            break
+    return filas
 
 
 def ahora_local() -> datetime:

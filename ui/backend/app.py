@@ -30,7 +30,7 @@ from watchfiles import awatch
 from agente_pedidos import eventos
 from agente_pedidos.workflow import aprobaciones_pendientes, crear_storage, motivo_para_no_reanudar, motivo_por_modo
 
-from . import estado
+from . import business_central, estado
 
 RAIZ = Path(__file__).resolve().parents[2]
 
@@ -70,6 +70,11 @@ class NuevaTarea(BaseModel):
     origen: str | None = None  # nombre del correo de ejemplo, si se eligió uno
 
 
+class Pregunta(BaseModel):
+    agente: str = "pedidos"
+    mensaje: str = Field(min_length=1, max_length=2_000)
+
+
 class Decision(BaseModel):
     decision: str = Field(pattern="^(si|no)$")
     aprobador: str = Field(default="Director", min_length=1, max_length=80)
@@ -104,12 +109,12 @@ def crear_app(config: Config | None = None) -> FastAPI:
             entorno["AGENTE_ORIGEN"] = origen
         return entorno
 
-    def lanzar(argumentos: list[str], log: Path, tarea: str | None = None, origen: str | None = None) -> subprocess.Popen:
+    def lanzar(argumentos: list[str], log: Path, tarea: str | None = None, origen: str | None = None, extra: dict[str, str] | None = None) -> subprocess.Popen:
         with log.open("ab") as salida:
             return subprocess.Popen(
                 [config.python, "-m", "agente_pedidos", *argumentos],
                 cwd=config.raiz,
-                env=entorno_hijo(tarea, origen),
+                env={**entorno_hijo(tarea, origen), **(extra or {})},
                 stdin=subprocess.DEVNULL,
                 stdout=salida,
                 stderr=subprocess.STDOUT,
@@ -135,7 +140,16 @@ def crear_app(config: Config | None = None) -> FastAPI:
             detenidos=detenidos(),
             modo_erp=os.environ.get("BC_MODO", "demo"),
             modelo=os.environ.get("MODELO_PROVEEDOR", "simulado"),
+            erp=business_central.descripcion(),
+            enlace_pedido=business_central.enlace_pedido,
+            presupuesto_dia_eur=presupuesto_dia(),
         )
+
+    def presupuesto_dia() -> float:
+        try:
+            return float(os.environ.get("OFICINA_PRESUPUESTO_DIA_EUR", "").replace(",", ".") or estado.PRESUPUESTO_DIA_EUR)
+        except ValueError:
+            return estado.PRESUPUESTO_DIA_EUR
 
     def emitir(tipo: str, agente: str, **datos: Any) -> None:
         eventos.emitir(tipo, agente=agente, tarea=None, fichero=config.eventos, **datos)
@@ -179,6 +193,22 @@ def crear_app(config: Config | None = None) -> FastAPI:
         fichero.write_text(cuerpo.correo, encoding="utf-8")
         origen = f"{_nombre_seguro(cuerpo.origen)}.txt" if cuerpo.origen else "correo pegado en la oficina"
         lanzar(["procesar", str(fichero), "--aprobar", "pendiente", "--aprobador", "Director"], config.bandeja / f"{tarea}.log", tarea, origen)
+        return {"tarea": tarea}
+
+    @app.post("/api/preguntas", status_code=202)
+    async def post_pregunta(cuerpo: Pregunta) -> dict[str, str]:
+        """«Preguntar al agente»: lanza el comando ``chat``; la respuesta llega al feed como evento.
+
+        Sin terminal y con ``CHAT_APROBAR=no``: si el asistente quiere usar una herramienta de
+        escritura, se le deniega (queda en la auditoría). Los pedidos se crean asignando una tarea,
+        con su tarjeta de aprobación.
+        """
+        if cuerpo.agente not in agentes_validos:
+            raise HTTPException(404, f"No hay ningún agente «{cuerpo.agente}» en la oficina.")
+        if cuerpo.agente in detenidos():
+            raise HTTPException(409, "El agente está detenido por el director: actívalo antes de preguntarle.")
+        tarea = eventos.nueva_tarea_id()
+        lanzar(["chat", cuerpo.mensaje, "--aprobador", "Director"], config.bandeja / f"{tarea}.log", tarea, "pregunta del director", {"CHAT_APROBAR": "no"})
         return {"tarea": tarea}
 
     @app.get("/api/aprobaciones")

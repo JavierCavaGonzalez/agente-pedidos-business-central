@@ -131,7 +131,15 @@ class Validar(Executor):
     async def validar(self, pedido: PedidoInterpretado, ctx: WorkflowContext[PedidoValidado]) -> None:
         eventos.emitir("paso", nombre="validar", descripcion="Comprobando cliente, artículos, existencias, crédito e importe")
         validado = await validar_pedido(pedido, self.bc, self.politica)
-        eventos.emitir("paso", nombre="politica", descripcion=_decision_de_politica(validado))
+        eventos.emitir(
+            "paso",
+            nombre="politica",
+            descripcion=_decision_de_politica(validado),
+            # Para el seguimiento de la oficina (también en el camino sin aprobación): cliente, total y líneas.
+            cliente=f"{validado.numero_cliente or '?'} {validado.nombre_cliente or ''}".strip(),
+            total=validado.total,
+            lineas=[{"articulo": l.numero_articulo, "descripcion": l.descripcion, "cantidad": l.cantidad, "importe": l.importe} for l in validado.lineas],
+        )
         await ctx.send_message(validado)
 
 
