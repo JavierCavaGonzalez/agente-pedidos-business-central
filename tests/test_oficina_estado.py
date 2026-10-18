@@ -64,6 +64,10 @@ def test_una_tarea_terminada_se_ve_diez_segundos_y_luego_libre(hace_s, resultado
     assert a["estado"] == esperado
     if esperado == "trabajando":
         assert a["bocadillo"] == "Hecho: pedido S-ORD101001 · coste 0,0042 €"
+    if esperado in ("trabajando", "error") and hace_s < 10:
+        assert a["resultado_reciente"] == {"resultado": resultado, "pedido": fin["datos"]["pedido"]}
+    else:
+        assert a["resultado_reciente"] is None
     if esperado == "libre":
         assert a["desde"] == fin["ts"]
 
@@ -114,3 +118,14 @@ def test_tablero_y_tareas_del_dia():
     assert (t1["estado"], t1["resultado"], t1["pedido"], t1["coste_eur"]) == ("terminada", "creado", "101023", pytest.approx(0.0064))
     assert [t["id"] for t in foto["tareas"]] == ["t2", "t1"]  # la más reciente primero
     assert foto["agentes"][0]["coste_hoy_eur"] == pytest.approx(0.0078)
+
+
+def test_los_importes_se_redondean_igual_en_la_cli_el_backend_y_el_navegador():
+    # 0,00375 se guarda en binario un pelo por debajo: con f"{x:.4f}" saldría 0,0037 en la CLI
+    # y 0,0038 en el navegador. Todos redondean medio hacia arriba sobre el valor decimal.
+    from agente_pedidos.observabilidad import ContadorCoste, redondear_eur
+
+    assert str(redondear_eur(0.00375)) == "0.0038"
+    assert estado.euros(0.00375, 4) == "0,0038 €" and estado.euros(5875.6) == "5.875,60 €"
+    contador = ContadorCoste(precio_entrada_por_millon=1.0, precio_salida_por_millon=0.0, tokens_entrada=3750)
+    assert contador.resumen().endswith("coste estimado 0.0038 €")

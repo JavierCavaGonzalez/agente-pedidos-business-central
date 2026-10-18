@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from agente_pedidos.observabilidad import redondear_eur
+
 SEGUNDOS_RESULTADO = 10
 
 AGENTES: list[dict[str, str]] = [
@@ -114,7 +116,7 @@ def euros(importe: float | None, decimales: int = 2) -> str:
     """Formato español; los costes del modelo, con 4 decimales (0,0042 € no es «0,00 €»)."""
     if importe is None:
         return "—"
-    return f"{importe:,.{decimales}f} €".replace(",", "_").replace(".", ",").replace("_", ".")
+    return f"{redondear_eur(importe, decimales):,} €".replace(",", "_").replace(".", ",").replace("_", ".")
 
 
 def describir(evento: dict[str, Any]) -> str | None:
@@ -210,12 +212,20 @@ def estado_agentes(
                 "desde": desde,
                 "tarea": actual.id if actual else None,
                 "bocadillo": bocadillo(actual) if actual else None,
+                "resultado_reciente": _resultado_reciente(actual, ahora),
                 "aprobaciones_pendientes": pendientes_por_agente.get(agente["id"], 0),
                 "tareas_hoy": len(suyas),
                 "coste_hoy_eur": round(sum(e["datos"].get("coste_eur", 0) for e in eventos if e["agente"] == agente["id"] and e["tipo"] == "modelo_llamada"), 6),
             }
         )
     return resultado
+
+
+def _resultado_reciente(tarea: Tarea | None, ahora: datetime) -> dict[str, Any] | None:
+    """La tarea mostrada terminó hace menos de SEGUNDOS_RESULTADO: su resultado, para que la chapa no diga «Trabajando»."""
+    if tarea is None or tarea.fin is None or _segundos_desde(tarea.fin["ts"], ahora) >= SEGUNDOS_RESULTADO:
+        return None
+    return {"resultado": tarea.fin["datos"].get("resultado"), "pedido": tarea.fin["datos"].get("pedido")}
 
 
 def detenido_desde(eventos: list[dict[str, Any]], agente: str) -> str | None:

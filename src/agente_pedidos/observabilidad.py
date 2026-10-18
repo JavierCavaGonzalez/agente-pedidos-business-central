@@ -18,7 +18,17 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
+
+
+def redondear_eur(importe: float, decimales: int = 4) -> Decimal:
+    """Redondeo «medio hacia arriba» sobre el valor decimal: 0,00375 -> 0,0038.
+
+    Con ``f"{x:.4f}"`` el resultado depende de cómo se guardó el número en binario (0,00375 sale
+    «0,0037») y no coincidiría con la oficina. La CLI, el backend y el navegador redondean así.
+    """
+    return Decimal(str(importe)).quantize(Decimal(1).scaleb(-decimales), rounding=ROUND_HALF_UP)
 
 
 def configurar_observabilidad(nombre_servicio: str = "agente-pedidos-bc") -> bool:
@@ -77,7 +87,7 @@ class ContadorCoste:
     def resumen(self) -> str:
         return (
             f"{self.llamadas} respuesta(s) de agente, {self.tokens_entrada} tokens de entrada, "
-            f"{self.tokens_salida} de salida, coste estimado {self.coste_eur:.4f} €"
+            f"{self.tokens_salida} de salida, coste estimado {redondear_eur(self.coste_eur)} €"
         )
 
 

@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from agente_pedidos import cli, eventos
+from agente_pedidos.observabilidad import redondear_eur
 from agente_pedidos.cli import cmd_procesar, cmd_reanudar
 
 CORREOS = Path(__file__).resolve().parents[1] / "ejemplos" / "correos"
@@ -91,7 +92,7 @@ async def test_procesar_sin_aprobacion_produce_la_secuencia_esperada(entorno, ev
     # El coste de la tarea (suma de sus llamadas al modelo) es el mismo que imprime la CLI.
     coste_cli = float(re.search(r"coste estimado ([\d.]+) €", capsys.readouterr().out).group(1))
     suma = sum(e["datos"]["coste_eur"] for e in lista if e["tipo"] == "modelo_llamada")
-    assert fin["coste_total_eur"] == pytest.approx(suma) and round(suma, 4) == coste_cli
+    assert fin["coste_total_eur"] == pytest.approx(suma) and float(redondear_eur(suma)) == coste_cli
 
 
 async def test_procesar_pendiente_y_reanudar_siguen_en_la_misma_tarea(entorno, eventos_temporales, capsys):
