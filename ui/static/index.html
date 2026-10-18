@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Oficina de agentes</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="oficina.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="cabecera">
+    <h1 class="pixel">Oficina de agentes</h1>
+    <div class="cabecera-datos">
+      <span class="etiqueta" id="modo-erp" title="Business Central: demo (simulado) o api (sandbox real)">ERP: …</span>
+      <span class="etiqueta" id="modelo" title="Proveedor del modelo de lenguaje">Modelo: …</span>
+      <label class="aprobador">Director:
+        <input id="aprobador" type="text" maxlength="80" autocomplete="off" spellcheck="false">
+      </label>
+      <span class="conexion" id="conexion" data-estado="conectando">Conectando…</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="marco" id="marco">
+      <!-- Escena escalada (1600×900 lógicos): arte, personajes, rótulos, chapas, bocadillos y tablero. -->
+      <div class="escena" id="escena" aria-label="Oficina: mesas de los agentes, despacho del director y tablero de control"></div>
+      <!-- Capa sin escalar: tarjetas de aprobación (deben leerse bien a cualquier ancho). -->
+      <div class="capa-fija" id="capa-fija"></div>
+    </div>
+
+    <section class="registro">
+      <h2 class="pixel">Tareas de hoy</h2>
+      <table class="tabla-tareas">
+        <thead><tr><th>Inicio</th><th>Origen</th><th>Estado</th><th>Pedido</th><th>Coste</th><th>Duración</th><th>Ahora</th></tr></thead>
+        <tbody id="tareas"><tr><td colspan="7" class="vacio">Sin tareas hoy.</td></tr></tbody>
+      </table>
+    </section>
+  </main>
+
+  <aside class="ficha" id="ficha" hidden aria-live="polite"></aside>
+
+  <dialog class="dialogo" id="dialogo-tarea">
+    <form method="dialog" id="form-tarea">
+      <h2 class="pixel">Asignar tarea</h2>
+      <label>Agente
+        <select id="tarea-agente"></select>
+      </label>
+      <label>Correo de ejemplo
+        <select id="tarea-ejemplo"><option value="">— pegar uno propio —</option></select>
+      </label>
+      <label>Correo del pedido
+        <textarea id="tarea-correo" rows="12" required placeholder="Pega aquí el correo del cliente…"></textarea>
+      </label>
+      <p class="aviso" id="tarea-aviso"></p>
+      <div class="botones">
+        <button type="button" value="cancelar" id="tarea-cancelar">Cancelar</button>
+        <button type="submit" value="asignar" class="primario" id="tarea-asignar">Asignar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="avisos" id="avisos" aria-live="polite"></div>
+</body>
+</html>

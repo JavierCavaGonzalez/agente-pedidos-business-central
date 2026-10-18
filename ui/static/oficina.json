@@ -1,0 +1,11 @@
+{
+  "escena": {"ancho": 1600, "alto": 900},
+  "director": {"x": 180, "y": 260, "nombre": "Director"},
+  "tablero": {"x": 1250, "y": 640},
+  "mesas": [
+    {"id": "m1", "x": 520, "y": 300, "agente": "pedidos"},
+    {"id": "m2", "x": 820, "y": 300, "agente": null, "vacante": "Compras"},
+    {"id": "m3", "x": 520, "y": 560, "agente": null, "vacante": "Finanzas"},
+    {"id": "m4", "x": 820, "y": 560, "agente": null, "vacante": "Almacén"}
+  ]
+}

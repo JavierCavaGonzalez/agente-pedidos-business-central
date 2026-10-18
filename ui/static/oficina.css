@@ -1,0 +1,264 @@
+/* Oficina de agentes — estilos. Escena lógica de 1600×900 escalada al ancho disponible. */
+
+:root {
+  --fondo: #0a1230;
+  --fondo-2: #0f1a3f;
+  --suelo: #13224d;
+  --linea: #1f3470;
+  --panel: #101c44;
+  --panel-borde: #2f4a8f;
+  --texto: #e6ecff;
+  --texto-suave: #9fb0d8;
+  --verde: #3ddc84;
+  --ambar: #ffb020;
+  --rojo: #ff4d4d;
+  --gris: #8a94a6;
+  --azul: #4d8dff;
+  --pixel: "VT323", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --normal: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --escala: 1;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--fondo);
+  color: var(--texto);
+  font-family: var(--normal);
+  font-size: 15px;
+}
+
+.pixel { font-family: var(--pixel); font-weight: normal; letter-spacing: .5px; }
+
+/* --- cabecera ------------------------------------------------------------------------------ */
+
+.cabecera {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 10px 20px; background: var(--fondo-2); border-bottom: 2px solid var(--panel-borde);
+}
+.cabecera h1 { margin: 0; font-size: 34px; color: #cfe0ff; }
+.cabecera-datos { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.etiqueta {
+  font-family: var(--pixel); font-size: 20px; padding: 2px 10px;
+  border: 2px solid var(--panel-borde); background: var(--panel);
+}
+.etiqueta[data-modo="api"] { border-color: var(--ambar); color: var(--ambar); }
+.aprobador { font-family: var(--pixel); font-size: 20px; }
+.aprobador input {
+  font: inherit; width: 150px; padding: 0 6px; color: var(--texto);
+  background: var(--panel); border: 2px solid var(--panel-borde);
+}
+.conexion { font-family: var(--pixel); font-size: 20px; }
+.conexion::before { content: "●"; margin-right: 6px; }
+.conexion[data-estado="conectado"] { color: var(--verde); }
+.conexion[data-estado="conectando"] { color: var(--ambar); }
+.conexion[data-estado="caido"] { color: var(--rojo); }
+
+/* --- marco y escena ------------------------------------------------------------------------ */
+
+main { max-width: 1920px; margin: 0 auto; padding: 12px 16px 32px; }
+
+.marco { position: relative; width: 100%; height: calc(900px * var(--escala)); overflow: hidden; border: 2px solid var(--panel-borde); }
+
+.escena {
+  position: absolute; left: 0; top: 0; width: 1600px; height: 900px;
+  transform: scale(var(--escala)); transform-origin: top left;
+  background: var(--suelo);
+  image-rendering: pixelated;
+}
+.escena.con-fondo { background: var(--suelo) url("art/oficina.png") no-repeat 0 0 / 1600px 900px; }
+.escena.con-fondo .arte-provisional { display: none; }
+
+.arte-provisional { position: absolute; inset: 0; }
+
+.capa-fija { position: absolute; inset: 0; pointer-events: none; }
+.capa-fija > * { pointer-events: auto; }
+
+/* Elementos colocados en coordenadas de la escena (el JS fija left/top). */
+.en-escena { position: absolute; transform: translate(-50%, -50%); }
+
+/* --- personajes ------------------------------------------------------------------------------ */
+
+.personaje {
+  width: 96px; height: 120px; cursor: pointer; border: 0; padding: 0; background: none;
+  transform: translate(-50%, -100%);
+}
+.personaje:focus-visible { outline: 3px dashed var(--azul); outline-offset: 4px; }
+.personaje svg { width: 100%; height: 100%; overflow: visible; }
+
+/* Hoja de sprites definitiva (64×64 por fotograma, 4 fotogramas, ampliada ×1.5) si existe. */
+.personaje.sprite { background-repeat: no-repeat; background-size: 384px 96px; width: 96px; height: 96px; animation: fotogramas 0.8s steps(4) infinite; }
+.personaje.sprite svg { display: none; }
+@keyframes fotogramas { from { background-position: 0 0; } to { background-position: -384px 0; } }
+
+/* Animaciones provisionales del personaje SVG. */
+.personaje .cuerpo { transform-origin: 48px 110px; transform-box: view-box; }
+.personaje[data-estado="libre"] .cuerpo { animation: respira 3s ease-in-out infinite; }
+.personaje[data-estado="trabajando"] .brazos { animation: teclea .35s steps(2) infinite; }
+.personaje[data-estado="esperando_aprobacion"] .mano { animation: saluda 1s ease-in-out infinite; transform-origin: 66px 62px; transform-box: view-box; }
+.personaje[data-estado="error"] .alerta { animation: alerta .6s steps(2) infinite; }
+.personaje[data-estado="detenido"] { filter: grayscale(.7) brightness(.8); }
+.personaje .mano, .personaje .reloj, .personaje .alerta,
+.director .mano, .director .reloj, .director .alerta { display: none; }
+.personaje[data-estado="esperando_aprobacion"] .mano,
+.personaje[data-estado="esperando_aprobacion"] .reloj { display: inline; }
+.personaje[data-estado="error"] .alerta { display: inline; }
+
+@keyframes respira { 50% { transform: scaleY(1.03); } }
+@keyframes teclea { 50% { transform: translateY(3px); } }
+@keyframes saluda { 50% { transform: rotate(-12deg); } }
+@keyframes alerta { 50% { opacity: 0; } }
+
+/* --- rótulos, chapas y bocadillos ------------------------------------------------------------ */
+
+.rotulo {
+  font-family: var(--pixel); font-size: 24px; line-height: 1; text-align: center; white-space: nowrap;
+  padding: 4px 10px 5px; background: #0c1638; border: 3px solid #cfe0ff; box-shadow: 4px 4px 0 #000a;
+}
+.rotulo small { display: block; font-size: 19px; color: var(--texto-suave); margin-top: 2px; }
+.rotulo.vacante { border-style: dashed; border-color: var(--gris); color: var(--gris); }
+
+.chapa {
+  font-family: var(--pixel); font-size: 21px; line-height: 1; white-space: nowrap;
+  padding: 4px 10px; color: #06102a; border: 3px solid #06102a; box-shadow: 3px 3px 0 #000a;
+}
+.chapa[data-estado="libre"] { background: var(--gris); }
+.chapa[data-estado="trabajando"] { background: var(--verde); }
+.chapa[data-estado="esperando_aprobacion"] { background: var(--ambar); animation: latido 1.4s ease-in-out infinite; }
+.chapa[data-estado="error"] { background: var(--rojo); color: #fff; animation: latido .8s ease-in-out infinite; }
+.chapa[data-estado="detenido"] { background: var(--azul); color: #fff; }
+.chapa .desde { display: block; font-size: 17px; margin-top: 2px; opacity: .85; }
+@keyframes latido { 50% { box-shadow: 0 0 0 6px #ffffff33, 3px 3px 0 #000a; } }
+
+.bocadillo {
+  max-width: 330px; min-width: 160px; padding: 8px 12px; font: 17px/1.3 var(--normal);
+  color: #0b1430; background: #f4f7ff; border: 3px solid #0b1430; border-radius: 4px;
+  box-shadow: 4px 4px 0 #000a; transform: translate(-50%, -100%);
+}
+.bocadillo::after {
+  content: ""; position: absolute; left: 50%; bottom: -14px; margin-left: -8px;
+  border: 8px solid transparent; border-top-color: #0b1430;
+}
+.bocadillo[data-estado="error"] { background: #ffe1e1; }
+.bocadillo[data-estado="esperando_aprobacion"] { background: #fff1d6; }
+.bocadillo:empty { display: none; }
+
+.contador-aprobaciones {
+  font-family: var(--pixel); font-size: 20px; min-width: 30px; height: 30px; line-height: 24px; text-align: center;
+  background: var(--ambar); color: #06102a; border: 3px solid #06102a;
+}
+
+/* --- director ---------------------------------------------------------------------------------- */
+
+.despacho-rotulo { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.boton-pixel {
+  font-family: var(--pixel); font-size: 22px; cursor: pointer; padding: 6px 14px;
+  color: #06102a; background: var(--ambar); border: 3px solid #06102a; box-shadow: 4px 4px 0 #000a;
+}
+.boton-pixel:hover { filter: brightness(1.1); }
+.boton-pixel:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 #000a; }
+.director { width: 90px; height: 120px; transform: translate(-50%, -100%); }
+.director.sprite { background-repeat: no-repeat; background-size: 180px 90px; height: 90px; animation: director 1.6s steps(2) infinite; }
+.director.sprite svg { display: none; }
+@keyframes director { from { background-position: 0 0; } to { background-position: -180px 0; } }
+
+/* --- tablero de control ------------------------------------------------------------------------ */
+
+.tablero {
+  position: absolute; width: 340px; padding: 12px 14px 14px; transform: none;
+  background: #050b20; border: 4px solid #5c7ad1; box-shadow: 6px 6px 0 #000c, inset 0 0 0 2px #1a2a5c;
+  font-family: var(--pixel); color: #cfe0ff;
+}
+.tablero h2 { margin: 0 0 8px; font-size: 26px; color: #8fb3ff; text-align: center; }
+.tablero dl { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; margin: 0; }
+.tablero dt { font-size: 21px; color: var(--texto-suave); }
+.tablero dd { margin: 0; font-size: 26px; text-align: right; color: var(--verde); }
+.tablero dd.ambar { color: var(--ambar); }
+.tablero dd.cambio { animation: cambio 1s ease-out; }
+@keyframes cambio { from { color: #fff; text-shadow: 0 0 8px #fff; } }
+
+/* --- tarjeta de aprobación (capa sin escalar) --------------------------------------------------- */
+
+.tarjeta {
+  position: absolute; width: 330px; padding: 12px 14px; color: #1a1300;
+  background: #fff4d6; border: 3px solid #06102a; border-top: 10px solid var(--ambar);
+  box-shadow: 6px 6px 0 #000c; font-size: 14px;
+}
+.tarjeta h3 { margin: 0 0 4px; font: 22px/1 var(--pixel); }
+.tarjeta .importe { font: 30px/1 var(--pixel); margin: 4px 0; }
+.tarjeta ul { margin: 6px 0; padding-left: 18px; }
+.tarjeta .motivo { margin: 4px 0 8px; color: #6b4b00; }
+.tarjeta .detalle { white-space: pre-wrap; font-family: ui-monospace, Consolas, monospace; font-size: 12px; background: #fffaf0; padding: 6px; border: 1px solid #e0c890; max-height: 180px; overflow: auto; }
+.tarjeta input { width: 100%; margin: 4px 0 8px; padding: 4px 6px; font: inherit; border: 2px solid #06102a; }
+.tarjeta .botones { display: flex; gap: 8px; }
+.tarjeta button { font: 19px var(--pixel); cursor: pointer; padding: 4px 10px; border: 3px solid #06102a; box-shadow: 3px 3px 0 #000a; }
+.tarjeta .aprobar { background: var(--verde); }
+.tarjeta .denegar { background: var(--rojo); color: #fff; }
+.tarjeta .ver { background: #fff; margin-left: auto; }
+.tarjeta button:disabled { opacity: .55; cursor: wait; }
+.tarjeta .situacion { margin: 6px 0 0; font-weight: 600; }
+.tarjeta::before { /* flecha hacia la mesa */
+  content: ""; position: absolute; top: 40px; border: 12px solid transparent;
+}
+.tarjeta.a-la-derecha::before { left: -27px; border-right-color: #06102a; }
+.tarjeta.a-la-izquierda::before { right: -27px; border-left-color: #06102a; }
+
+/* --- ficha del agente (panel lateral) ---------------------------------------------------------- */
+
+.ficha {
+  position: fixed; top: 0; right: 0; width: min(440px, 100vw); height: 100vh; overflow-y: auto; z-index: 20;
+  background: var(--fondo-2); border-left: 3px solid var(--panel-borde); box-shadow: -8px 0 0 #0006; padding: 16px 18px 40px;
+}
+.ficha h2 { margin: 0; font-size: 32px; }
+.ficha .rol { color: var(--texto-suave); margin: 0 0 10px; }
+.ficha h3 { font: 24px var(--pixel); margin: 18px 0 6px; color: #8fb3ff; }
+.ficha .cerrar { position: absolute; top: 10px; right: 12px; font: 24px var(--pixel); background: none; color: var(--texto); border: 2px solid var(--panel-borde); cursor: pointer; }
+.ficha .chapa { display: inline-block; margin: 2px 0 6px; }
+.ficha .acciones { display: flex; gap: 8px; margin: 10px 0; }
+.ficha .cifras { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.ficha .cifra { background: var(--panel); border: 2px solid var(--panel-borde); padding: 6px 8px; }
+.ficha .cifra b { display: block; font: 26px var(--pixel); color: var(--verde); }
+.ficha ul { list-style: none; margin: 0; padding: 0; }
+.ficha li { padding: 5px 0; border-bottom: 1px solid var(--linea); }
+.ficha .hora { font-family: var(--pixel); font-size: 18px; color: var(--texto-suave); margin-right: 8px; }
+.ficha li[data-tipo="error"], .ficha li[data-tipo="erp_bloqueada"] { color: #ffb3b3; }
+.ficha li[data-tipo="aprobacion_solicitada"] { color: #ffd88a; }
+.ficha li[data-tipo="erp_escritura"] { color: #a6f5c8; }
+.ficha .vacio, .vacio { color: var(--texto-suave); font-style: italic; }
+
+/* --- registro de tareas ------------------------------------------------------------------------ */
+
+.registro h2 { font-size: 28px; margin: 18px 0 6px; color: #8fb3ff; }
+.tabla-tareas { width: 100%; border-collapse: collapse; background: var(--panel); border: 2px solid var(--panel-borde); }
+.tabla-tareas th { font: 20px var(--pixel); text-align: left; color: var(--texto-suave); padding: 6px 8px; border-bottom: 2px solid var(--panel-borde); }
+.tabla-tareas td { padding: 6px 8px; border-bottom: 1px solid var(--linea); vertical-align: top; }
+.tabla-tareas td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.resultado { font-family: var(--pixel); font-size: 19px; padding: 0 6px; color: #06102a; }
+.resultado[data-r="creado"] { background: var(--verde); }
+.resultado[data-r="rechazado"], .resultado[data-r="denegado"] { background: var(--gris); }
+.resultado[data-r="error"] { background: var(--rojo); color: #fff; }
+.resultado[data-r="esperando_aprobacion"] { background: var(--ambar); }
+.resultado[data-r="en_curso"] { background: var(--azul); color: #fff; }
+
+/* --- diálogo y avisos -------------------------------------------------------------------------- */
+
+.dialogo { width: min(640px, 94vw); color: var(--texto); background: var(--fondo-2); border: 3px solid var(--panel-borde); box-shadow: 8px 8px 0 #000c; padding: 16px 20px; }
+.dialogo::backdrop { background: #000a; }
+.dialogo h2 { margin: 0 0 10px; font-size: 30px; }
+.dialogo label { display: block; margin: 8px 0; font-weight: 600; }
+.dialogo select, .dialogo textarea { display: block; width: 100%; margin-top: 4px; font: 14px var(--normal); color: var(--texto); background: var(--panel); border: 2px solid var(--panel-borde); padding: 6px; }
+.dialogo textarea { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+.dialogo .botones { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }
+.dialogo button { font: 22px var(--pixel); padding: 4px 14px; cursor: pointer; border: 3px solid #06102a; background: #cfd8ee; }
+.dialogo button.primario { background: var(--ambar); }
+.dialogo .aviso { color: var(--ambar); min-height: 1.2em; margin: 4px 0; }
+
+.avisos { position: fixed; left: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 30; }
+.aviso-flotante { padding: 8px 12px; background: var(--panel); border: 2px solid var(--panel-borde); box-shadow: 4px 4px 0 #000a; max-width: 420px; }
+.aviso-flotante[data-tipo="error"] { border-color: var(--rojo); }
+.aviso-flotante[data-tipo="ok"] { border-color: var(--verde); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; }
+}
