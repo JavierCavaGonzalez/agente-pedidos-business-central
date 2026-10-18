@@ -52,7 +52,7 @@ Funciona **sin ninguna credencial** en modo demo (modelo simulado + Business Cen
 | **MCP** | `src/agente_pedidos/mcp_server.py` | Servidor MCP opcional con las lecturas del ERP y `MCPStdioTool` para consumirlo desde el agente |
 | **DevUI** | `devui/` | Entidades para la interfaz de pruebas del framework (beta) |
 | **Línea de comandos** | `src/agente_pedidos/cli.py` | `demo`, `procesar`, `pendientes`, `reanudar`, `chat`, `grafo` |
-| **Pruebas** | `tests/` | 44 pruebas sin modelo real ni ERP real (incluida la reanudación desde checkpoint) |
+| **Pruebas** | `tests/` | 48 pruebas sin modelo real ni ERP real (incluida la reanudación desde checkpoint) |
 
 ## 2. Los escenarios y por qué este
 
@@ -194,7 +194,7 @@ Endpoints que usa `cliente_api.py` (todos estándar, sin extensiones AL): `GET c
 
 Rarezas de la API v2.0 que el cliente ya resuelve:
 
-- **`contains` distingue mayúsculas y tildes**: «Lámpara» encuentra «Lámpara ÁMSTERDAM», pero «lámpara», «LÁMPARA», «lampara» o «AMSTERDAM» no. Y en CRONUS ES los artículos tienen nombres en español. Si la búsqueda de artículos con todas las palabras no da resultados, `cliente_api.py` busca cada palabra útil por separado (ignora las de menos de tres letras y palabras vacías como «para» o «una», pasa los plurales a singular y prueba las variantes de mayúsculas) y ordena los candidatos por cuántas palabras coinciden sin tener en cuenta las tildes. Las tildes no se pueden adivinar desde el código: los prompts piden al modelo que, si una búsqueda no da resultados, la repita con el nombre en español y con tildes.
+- **`contains` distingue mayúsculas y tildes**: «Lámpara» encuentra «Lámpara ÁMSTERDAM», pero «lámpara», «LÁMPARA», «lampara» o «AMSTERDAM» no. Y en CRONUS ES los artículos tienen nombres en español. Si la búsqueda de artículos (o de clientes: «adatum» → «Adatum Corporation») con el texto completo no da resultados, `cliente_api.py` busca cada palabra útil por separado (ignora las de menos de tres letras y palabras vacías como «para» o «una», pasa los plurales a singular y prueba las variantes de mayúsculas) y ordena los candidatos por cuántas palabras coinciden sin tener en cuenta las tildes. Las tildes no se pueden adivinar desde el código: los prompts piden al modelo que, si una búsqueda no da resultados, la repita con el nombre en español y con tildes.
 - **`blocked` de un cliente no bloqueado llega como `"_x0020_"`** (el espacio en blanco del enum, codificado), no como `" "` ni vacío. Sin normalizarlo, cualquier comprobación de «bloqueado = valor no vacío» rechazaría a todos los clientes. `cliente_api.py` lo convierte en `""`; un bloqueo real (`Ship`, `Invoice`, `All`) se conserva.
 
 Límites a tener en cuenta: 300 peticiones por minuto en sandbox, 600 en producción.
@@ -238,7 +238,7 @@ Aparecen dos entidades: el agente `interprete` y el workflow `pedidos`, ambos co
 python -m pytest -q
 ```
 
-44 pruebas, todas sin modelo real ni Business Central real (modelo simulado y `ClienteDemo`): reglas de negocio, cliente de demostración, los cuatro recorridos del workflow (creación automática, aprobación con reanudación desde checkpoint en una instancia nueva, rechazo humano, rechazo por validación), aprobación a nivel de agente (aceptar, rechazar y confirmar en texto tras crear el pedido), aprobación por consola sin terminal o con EOF (se deniega y se audita), middleware de solo lectura y de presupuesto, lectura de `.env` (comentarios al final de línea), filtros del cliente de la API v2.0 contra una API simulada con `httpx.MockTransport` que se comporta como la real (sin `or` entre campos, `contains` sensible a mayúsculas y tildes, `blocked` como `_x0020_`), errores del ERP como datos en las lecturas, auditoría de herramientas que fallan, y la integración MCP (se omite si `mcp` no está instalado).
+48 pruebas, todas sin modelo real ni Business Central real (modelo simulado y `ClienteDemo`): reglas de negocio, cliente de demostración, los cuatro recorridos del workflow (creación automática, aprobación con reanudación desde checkpoint en una instancia nueva, rechazo humano, rechazo por validación), aprobación a nivel de agente (aceptar, rechazar y confirmar en texto tras crear el pedido), aprobación por consola sin terminal o con EOF (se deniega y se audita), middleware de solo lectura y de presupuesto, lectura de `.env` (comentarios al final de línea), filtros del cliente de la API v2.0 contra una API simulada con `httpx.MockTransport` que se comporta como la real (sin `or` entre campos, `contains` sensible a mayúsculas y tildes, `blocked` como `_x0020_`), errores del ERP como datos en las lecturas, auditoría de herramientas que fallan, y la integración MCP (se omite si `mcp` no está instalado).
 
 ## 12. Estructura del repositorio y qué hace cada archivo
 

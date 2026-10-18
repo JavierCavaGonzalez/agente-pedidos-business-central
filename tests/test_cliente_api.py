@@ -147,3 +147,28 @@ async def test_si_la_busqueda_completa_encuentra_algo_no_se_desglosa(api, bc):
     assert await bc.buscar_articulos("AMSTERDAM Lamp") == [LAMPARA]
     assert len(api.filtros) == 1
     await bc.cerrar()
+
+
+@pytest.mark.parametrize("texto", ["adatum", "ADATUM CORPORATION", "corporation adatum"])
+async def test_busqueda_de_clientes_tolerante_a_mayusculas(texto):
+    api = ApiFalsa(clientes=[ADATUM, RELECLOUD])
+    bc = ClienteApiV2("tenant", "Sandbox", "app", "secreto", id_empresa="empresa-1")
+    bc._http = httpx.AsyncClient(transport=httpx.MockTransport(api))
+
+    resultado = await bc.buscar_clientes(texto)
+
+    assert resultado and resultado[0]["number"] == "10000"
+    assert resultado[0]["blocked"] == ""  # también normalizado por el camino del desglose
+    assert all(len(campos_unidos_por_or(f)) <= 1 for f in api.filtros)
+    await bc.cerrar()
+
+
+async def test_busqueda_de_clientes_tolerante_a_tildes():
+    ibanez = {"id": "c9", "number": "60000", "displayName": "Muebles Ibáñez", "blocked": "_x0020_"}
+    api = ApiFalsa(clientes=[ADATUM, ibanez])
+    bc = ClienteApiV2("tenant", "Sandbox", "app", "secreto", id_empresa="empresa-1")
+    bc._http = httpx.AsyncClient(transport=httpx.MockTransport(api))
+
+    # «ibanez» sin tilde no coincide en el servidor, pero «muebles» sí, y el orden se decide sin tildes.
+    assert (await bc.buscar_clientes("muebles ibanez"))[0]["number"] == "60000"
+    await bc.cerrar()

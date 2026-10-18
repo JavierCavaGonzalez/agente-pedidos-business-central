@@ -198,12 +198,10 @@ class ClienteApiV2(ClienteBC):
         t = texto.strip()
         if not t:
             return []
-        clientes = await self._buscar(
-            "customers",
-            f"contains(displayName,'{_escapar_odata(t)}')",
-            t,
-            "id,number,displayName,email,blocked,creditLimit,balanceDue",
-        )
+        campos = "id,number,displayName,email,blocked,creditLimit,balanceDue"
+        clientes = await self._buscar("customers", f"contains(displayName,'{_escapar_odata(t)}')", t, campos)
+        if not clientes:
+            clientes = await self._buscar_por_palabras("customers", t, campos)  # «adatum» -> «Adatum Corporation»
         return [_normalizar_cliente(c) for c in clientes]
 
     async def obtener_cliente(self, numero: str) -> dict[str, Any] | None:
@@ -217,37 +215,40 @@ class ClienteApiV2(ClienteBC):
         return _normalizar_cliente(valores[0]) if valores else None
 
     async def buscar_articulos(self, texto: str) -> list[dict[str, Any]]:
-        """Busca con todas las palabras; si no hay resultados, palabra por palabra.
-
-        El ``contains`` de Business Central distingue mayúsculas y tildes, y los nombres pueden
-        estar en otro idioma («Lámpara ÁMSTERDAM» en CRONUS ES). Si la búsqueda completa no
-        encuentra nada, se busca cada palabra útil por separado (con sus variantes de mayúsculas)
-        y se ordenan los candidatos en el código por cuántas palabras coinciden sin tildes.
-        """
+        """Busca con todas las palabras; si no hay resultados, palabra por palabra (ver ``_buscar_por_palabras``)."""
         t = texto.strip()
         palabras = [_escapar_odata(p) for p in t.split() if p]
         if not palabras:
             return []
         campos = "id,number,displayName,type,blocked,inventory,unitPrice,baseUnitOfMeasureCode"
         articulos = await self._buscar("items", " and ".join(f"contains(displayName,'{p}')" for p in palabras), t, campos)
-        claves = _palabras_clave(t)
-        if articulos or not claves:
-            return articulos
+        return articulos or await self._buscar_por_palabras("items", t, campos)
 
+    async def _buscar_por_palabras(self, entidad: str, texto: str, campos: str) -> list[dict[str, Any]]:
+        """Plan B cuando la búsqueda con el texto completo no encuentra nada.
+
+        El ``contains`` de Business Central distingue mayúsculas y tildes, y los nombres pueden
+        estar en otro idioma («Lámpara ÁMSTERDAM» en CRONUS ES). Se busca cada palabra útil por
+        separado (con sus variantes de mayúsculas) y se ordenan los candidatos en el código por
+        cuántas palabras coinciden sin tildes ni mayúsculas.
+        """
+        claves = _palabras_clave(texto)
+        if not claves:
+            return []
         empresa = await self._ruta_empresa()
         candidatos: list[dict[str, Any]] = []
         for clave in claves:
             for variante in _variantes_mayusculas(clave):
                 datos = await self._peticion(
                     "GET",
-                    f"{empresa}/items",
+                    f"{empresa}/{entidad}",
                     params={"$filter": f"contains(displayName,'{_escapar_odata(variante)}')", "$top": 20, "$select": campos},
                 )
                 candidatos.extend(datos.get("value", []))
         plegadas = [_plegar(c) for c in claves]
 
-        def coincidencias(articulo: dict[str, Any]) -> int:
-            nombre = _plegar(articulo.get("displayName", ""))
+        def coincidencias(registro: dict[str, Any]) -> int:
+            nombre = _plegar(registro.get("displayName", ""))
             return sum(clave in nombre for clave in plegadas)
 
         return sorted(_sin_duplicados(candidatos), key=coincidencias, reverse=True)[:10]

@@ -137,6 +137,28 @@ Las tildes no se pueden adivinar desde el código (una búsqueda de solo «AMSTE
 
 **Lección.** Antes de diseñar una búsqueda contra el ERP real, medir cómo filtra (mayúsculas, tildes, plurales, idioma de los datos) con unas pocas lecturas directas; la API simulada de las pruebas debe imitar lo medido, no lo supuesto.
 
+## 2026-10-18 · Tercera prueba en el sandbox: las cinco comprobaciones superadas
+
+`chat "Empresa: Adatum Corporation. Necesito 2 lámparas AMSTERDAM"` contra TEST29 (CRONUS ES) con `AGENTE_SOLO_LECTURA=1` y `CHAT_APROBAR=si`, después de los commits de los filtros, `blocked` y la búsqueda tolerante:
+
+| # | Comprobación | Resultado |
+|---|---|---|
+| 1 | Token de Entra ID | ✅ Obtenido |
+| 2 | Empresa CRONUS ES | ✅ Encontrada |
+| 3 | Cliente | ✅ `buscar_clientes("Adatum Corporation")` → 10000 Adatum Corporation, con `blocked: ""` (ya normalizado) |
+| 4 | Artículo | ✅ `buscar_articulos("AMSTERDAM lamp")` → nada; el modelo repitió con `"Lámpara ÁMSTERDAM"` → 1928-S (504 en existencias, 55,20) |
+| 5 | Bloqueo de la escritura | ✅ El agente pidió `crear_pedido_venta` (10000, 2 × 1928-S), `CHAT_APROBAR=si` lo aprobó y `SoloLectura` lo bloqueó: la auditoría registra la llamada con `{"error": "La herramienta 'crear_pedido_venta' está bloqueada por política: el agente está en modo solo lectura."}` |
+
+Respuesta final: «He identificado el cliente Adatum Corporation y el artículo Lámpara ÁMSTERDAM con número 1928-S para 2 unidades, pero no puedo crear el pedido porque estoy en modo solo lectura.» Una lectura posterior de `salesOrders` (cliente 10000, fecha 2026-10-18) confirma que en TEST29 no se creó ningún pedido.
+
+**Qué encontró el artículo.** Esta vez el modelo buscó en inglés («AMSTERDAM lamp»), y ni la búsqueda completa ni el desglose podían encontrar «Lámpara ÁMSTERDAM» («lamp» no está en «Lámpara»). Lo resolvió la línea nueva de los prompts: el modelo repitió la búsqueda en español y con tildes. El desglose del código cubre el caso en que el modelo usa palabras españolas sin tilde o en otra forma («2 lámparas AMSTERDAM», «lampara de Ámsterdam»); las dos medidas se complementan.
+
+5 llamadas al modelo (918/18, 983/19, 1.012/22, 1.093/38, 1.183/53), 5.189 / 150 tokens, coste estimado 0,0116 €.
+
+## 2026-10-18 · Búsqueda de clientes tolerante a mayúsculas y tildes
+
+`buscar_clientes` tenía el mismo problema que los artículos: «adatum» no encontraba «Adatum Corporation» porque `contains` distingue mayúsculas. El desglose palabra por palabra pasa a un método común, `_buscar_por_palabras(entidad, texto, campos)`, que usan `buscar_articulos` y `buscar_clientes` cuando la búsqueda con el texto completo no da resultados. Los clientes encontrados por ese camino también pasan por la normalización de `blocked`. 4 pruebas nuevas en `tests/test_cliente_api.py` («adatum», «ADATUM CORPORATION», «corporation adatum» y «muebles ibanez» → «Muebles Ibáñez»); fallan con el código anterior. Total: 48.
+
 ## 2026-10-18 · Ejecuciones con el modelo real: llamadas y coste
 
 Azure OpenAI, despliegue `gpt-4.1-mini`, `BC_MODO=demo` (ERP simulado: no se escribió nada real). Las llamadas al modelo salen de las trazas (`ENABLE_CONSOLE_EXPORTERS=1`, spans `chat`); sus tokens cuadran con la línea «Coste» de la CLI. El coste está calculado con las tarifas por defecto del ejemplo (2 € por millón de tokens de entrada y 8 € por millón de salida), no con la tarifa real de Azure.
@@ -151,7 +173,10 @@ Azure OpenAI, despliegue `gpt-4.1-mini`, `BC_MODO=demo` (ERP simulado: no se esc
 | 6 | `procesar 02_pedido_grande.txt --aprobar si` (tras las correcciones) | Igual que la 2 | 3 (2 + 1) | 3.141 / 337 | 0,0090 € |
 | 7 | `chat …` (`CHAT_APROBAR=si`, con `prompts/asistente.md`) | Responde en texto, pero pide confirmación en el chat y no llama a `crear_pedido_venta`; sin pedido | 3 | 2.412 / 75 | 0,0054 € |
 | 8 | `chat …` (`CHAT_APROBAR=si`, prompt del asistente ajustado) | Pide aprobación, crea S-ORD101001 y responde en texto con número, cliente, líneas y total | 3 | 2.801 / 145 | 0,0068 € |
-| | **Total del día** | | **20** | **19.048 / 1.327** | **≈ 0,0487 €** |
+| 9 | `chat …` contra TEST29 (solo lectura) | Lecturas con 501 por `or` entre campos | sin trazas | 1.792 / 111 | 0,0045 € |
+| 10 | `chat …` contra TEST29 (solo lectura) | Cliente encontrado; artículo no | 2 | 1.825 / 101 | 0,0045 € |
+| 11 | `chat …` contra TEST29 (solo lectura) | Cinco comprobaciones superadas; escritura bloqueada por `SoloLectura` | 5 | 5.189 / 150 | 0,0116 € |
+| | **Total del día** | | **27 + las de la 9** | **27.854 / 1.689** | **≈ 0,0692 €** |
 
 Observaciones:
 
