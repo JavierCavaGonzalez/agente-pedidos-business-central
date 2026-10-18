@@ -6,6 +6,8 @@
 checkpoints/
 checkpoints-devui/
 auditoria*.jsonl
+eventos*.jsonl
+ui/bandeja/
 
 # Python
 __pycache__/
