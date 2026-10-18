@@ -159,6 +159,31 @@ Respuesta final: «He identificado el cliente Adatum Corporation y el artículo 
 
 `buscar_clientes` tenía el mismo problema que los artículos: «adatum» no encontraba «Adatum Corporation» porque `contains` distingue mayúsculas. El desglose palabra por palabra pasa a un método común, `_buscar_por_palabras(entidad, texto, campos)`, que usan `buscar_articulos` y `buscar_clientes` cuando la búsqueda con el texto completo no da resultados. Los clientes encontrados por ese camino también pasan por la normalización de `blocked`. 4 pruebas nuevas en `tests/test_cliente_api.py` («adatum», «ADATUM CORPORATION», «corporation adatum» y «muebles ibanez» → «Muebles Ibáñez»); fallan con el código anterior. Total: 48.
 
+## 2026-10-18 · Pedidos reales creados en el sandbox: flujo directo y flujo con aprobación
+
+Sandbox TEST29 (CRONUS ES), `BC_MODO=api`, `AGENTE_SOLO_LECTURA=0`, umbral de aprobación 3.000 €, modelo `gpt-4.1-mini`.
+
+**Correos nuevos**, con artículos y clientes reales de TEST29 consultados por API y los nombres tal como están en CRONUS ES (sin códigos de artículo, para que el modelo tenga que buscarlos):
+
+- `ejemplos/correos/05_cronus_es_pequeno.txt`: Adatum Corporation, 10 × «Lámpara ÁMSTERDAM» (1928-S, 55,20) + 2 × «Silla inv. PARÍS, negra» (1900-S, 193,70) = 939,40 €.
+- `ejemplos/correos/06_cronus_es_grande.txt`: Trey Research (20000), 3 × «Escritorio ATENAS» (1896-S, 1.005,80) + 4 × «Silla giratoria LONDRES, azul» (1908-S, 191,00) = 3.781,40 €.
+
+**Flujo directo** (`procesar 05_cronus_es_pequeno.txt`): interpretar → validar → crear_pedido → redactar, sin aprobación (939,40 < 3.000). **Pedido 101021** creado en Business Central: Adatum Corporation, 939,40 € sin impuestos (el total que devuelve Business Central coincide con el que calcula el código), referencia ADT-8102, estado Draft. El intérprete encontró los dos artículos a la primera, buscando «Lámpara ÁMSTERDAM» y «Silla inv. PARÍS negra». 3 llamadas al modelo (1.363/76, 1.577/185, 287/98), 3.227 / 359 tokens, 0,0093 €.
+
+**Flujo con aprobación** (`procesar 06_cronus_es_grande.txt --aprobar pendiente`, `pendientes`, `reanudar … --decision si --aprobador "Javier" --comentario "OK"`):
+
+1. `procesar` se para en `aprobacion_humana` (3.781,40 > 3.000) y guarda el checkpoint `66f533d0-11ce-4e95-b80f-0c7d338dbb65`. 2 llamadas al modelo (1.364/76, 1.566/181), 2.930 / 257 tokens, 0,0079 € (calculado con las trazas: en modo `pendiente` la CLI termina sin imprimir el coste).
+2. Pedidos en TEST29 leídos por API antes de procesar, durante la parada y justo antes de reanudar: el último seguía siendo el 101021. **Entre la parada y la reanudación no se creó ningún pedido.**
+3. `reanudar`, en otro proceso: aprobacion_humana → crear_pedido → redactar. **Pedido 101022** creado: Trey Research, 3.781,40 € sin impuestos (Business Central coincide), referencia TRY-5531, estado Draft, «Aprobado por Javier: OK». 1 llamada al modelo (redactor), 283 / 100 tokens, 0,0014 €.
+
+Total del flujo con aprobación: 3 llamadas, 3.213 / 357 tokens, 0,0093 €.
+
+**Hallazgos (sin corregir).**
+
+- **La escritura del workflow no queda en la auditoría.** El nodo `crear_pedido` (`workflow.py`) llama directamente a `bc.crear_pedido_venta`, sin pasar por las herramientas ni por el middleware. En `auditoria.jsonl` constan las lecturas del intérprete, pero **no la creación de los pedidos 101021 y 101022**, que son justo las operaciones que más interesa auditar. (En `chat` sí consta, porque la escritura es una herramienta.) Propuesta: que `CrearPedido` registre el intento y el resultado con `AuditoriaHerramientas.registrar()`, incluida la decisión humana (aprobador y comentario).
+- **`pendientes` muestra aprobaciones ya resueltas.** Aparecieron cuatro checkpoints antiguos de hoy (Adatum, 5.875,60, de la demo y de `procesar` con aprobación en el mismo proceso) como si siguieran pendientes: cuando la aprobación se responde en el mismo proceso (`--aprobar si` o por consola), el checkpoint de la pausa no se marca como resuelto. Es peligroso con un ERP real: los artículos 1900-S y 1896-S existen también en CRONUS ES, así que `reanudar` sobre uno de esos checkpoints **crearía un pedido real de 5.875,60 € duplicado**. Propuesta: que `pendientes` ignore los checkpoints de ejecuciones que ya continuaron (o que se borren al terminar), y que `reanudar` se niegue a reanudar un checkpoint ya superado.
+- **En modo `--aprobar pendiente`, `procesar` no imprime el coste** de la parte ya ejecutada (interpretar y validar).
+
 ## 2026-10-18 · Ejecuciones con el modelo real: llamadas y coste
 
 Azure OpenAI, despliegue `gpt-4.1-mini`, `BC_MODO=demo` (ERP simulado: no se escribió nada real). Las llamadas al modelo salen de las trazas (`ENABLE_CONSOLE_EXPORTERS=1`, spans `chat`); sus tokens cuadran con la línea «Coste» de la CLI. El coste está calculado con las tarifas por defecto del ejemplo (2 € por millón de tokens de entrada y 8 € por millón de salida), no con la tarifa real de Azure.
@@ -176,7 +201,10 @@ Azure OpenAI, despliegue `gpt-4.1-mini`, `BC_MODO=demo` (ERP simulado: no se esc
 | 9 | `chat …` contra TEST29 (solo lectura) | Lecturas con 501 por `or` entre campos | sin trazas | 1.792 / 111 | 0,0045 € |
 | 10 | `chat …` contra TEST29 (solo lectura) | Cliente encontrado; artículo no | 2 | 1.825 / 101 | 0,0045 € |
 | 11 | `chat …` contra TEST29 (solo lectura) | Cinco comprobaciones superadas; escritura bloqueada por `SoloLectura` | 5 | 5.189 / 150 | 0,0116 € |
-| | **Total del día** | | **27 + las de la 9** | **27.854 / 1.689** | **≈ 0,0692 €** |
+| 12 | `procesar 05_cronus_es_pequeno.txt` contra TEST29 | Pedido real 101021 (939,40 €), sin aprobación | 3 | 3.227 / 359 | 0,0093 € |
+| 13 | `procesar 06_cronus_es_grande.txt --aprobar pendiente` contra TEST29 | Se para a pedir aprobación; checkpoint guardado | 2 | 2.930 / 257 | 0,0079 € |
+| 14 | `reanudar --checkpoint 66f533d0-… --decision si` contra TEST29 | Pedido real 101022 (3.781,40 €) | 1 | 283 / 100 | 0,0014 € |
+| | **Total del día** | | **33 + las de la 9** | **34.294 / 2.405** | **≈ 0,0878 €** |
 
 Observaciones:
 

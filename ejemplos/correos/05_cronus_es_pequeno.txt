@@ -1,0 +1,12 @@
+De: compras@adatum.example
+Asunto: Pedido para la recepción
+Empresa: Adatum Corporation
+
+Hola,
+
+para la recepción de la oficina necesitamos 10 Lámpara ÁMSTERDAM y 2 Silla inv. PARÍS, negra.
+Si puede ser, entrega el 20 de noviembre de 2026.
+Nuestra referencia: ADT-8102.
+
+Gracias,
+Departamento de compras

@@ -253,7 +253,7 @@ agente-pedidos-business-central/
 │   ├── interprete.md             ← instrucciones del agente intérprete
 │   ├── redactor.md               ← instrucciones del agente redactor
 │   └── asistente.md              ← instrucciones del asistente de chat (confirma en texto, nunca en JSON)
-├── ejemplos/correos/             ← cuatro correos de prueba (uno por recorrido)
+├── ejemplos/correos/             ← cuatro correos de prueba (uno por recorrido) y dos con los nombres de CRONUS ES para un sandbox real (05, 06)
 ├── devui/                        ← entidades para DevUI (agente y workflow)
 ├── docs/
 │   ├── arquitectura.md           ← diagramas (esqueleto, recorrido, workflow)
