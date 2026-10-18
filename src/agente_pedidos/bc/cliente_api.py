@@ -8,14 +8,15 @@ una persona.
 
 Endpoints usados (todos de la API v2.0 estándar, sin extensiones AL):
 - GET  /companies
-- GET  /companies({id})/customers
-- GET  /companies({id})/items
+- GET  /companies({id})/customers   (por nombre; y por número si el texto parece un código)
+- GET  /companies({id})/items       (ídem; la API no admite ``or`` entre campos distintos)
 - POST /companies({id})/salesOrders
 - POST /companies({id})/salesOrders({id})/salesOrderLines
 """
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
@@ -28,9 +29,24 @@ URL_TOKEN = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
 AMBITO = "https://api.businesscentral.dynamics.com/.default"
 
 
+# Un número de cliente o de artículo: dígitos, o dígitos con sufijo (10000, 1928-S).
+PARECE_CODIGO = re.compile(r"^\d+(?:-[A-Za-z0-9]+)?$")
+
+
 def _escapar_odata(texto: str) -> str:
     """Escapa comillas simples para usarlas dentro de un filtro OData."""
     return texto.replace("'", "''")
+
+
+def _sin_duplicados(registros: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    vistos: set[str] = set()
+    unicos = []
+    for registro in registros:
+        clave = registro.get("id") or registro.get("number")
+        if clave not in vistos:
+            vistos.add(clave)
+            unicos.append(registro)
+    return unicos
 
 
 class ClienteApiV2(ClienteBC):
@@ -124,19 +140,34 @@ class ClienteApiV2(ClienteBC):
         nombres = ", ".join(e.get("name", "?") for e in datos.get("value", []))
         raise ErrorBC(f"No existe la empresa '{self._nombre_empresa}'. Empresas disponibles: {nombres}")
 
+    async def _buscar(self, entidad: str, filtro_nombre: str, texto: str, campos: str) -> list[dict[str, Any]]:
+        """Busca por nombre y, si el texto parece un código, también por número exacto.
+
+        Son dos peticiones porque la API no admite ``or`` entre campos distintos
+        (``contains(displayName,…) or number eq …`` devuelve 501 Not Implemented).
+        """
+        empresa = await self._ruta_empresa()
+        filtros = []
+        if PARECE_CODIGO.match(texto):
+            filtros.append(f"number eq '{_escapar_odata(texto)}'")  # la coincidencia exacta, primero
+        filtros.append(filtro_nombre)
+        resultados: list[dict[str, Any]] = []
+        for filtro in filtros:
+            datos = await self._peticion("GET", f"{empresa}/{entidad}", params={"$filter": filtro, "$top": 10, "$select": campos})
+            resultados.extend(datos.get("value", []))
+        return _sin_duplicados(resultados)[:10]
+
     # --- lecturas -----------------------------------------------------------------
     async def buscar_clientes(self, texto: str) -> list[dict[str, Any]]:
-        t = _escapar_odata(texto.strip())
+        t = texto.strip()
         if not t:
             return []
-        empresa = await self._ruta_empresa()
-        filtro = f"contains(displayName,'{t}') or number eq '{t}'"
-        datos = await self._peticion(
-            "GET",
-            f"{empresa}/customers",
-            params={"$filter": filtro, "$top": 10, "$select": "id,number,displayName,email,blocked,creditLimit,balanceDue"},
+        return await self._buscar(
+            "customers",
+            f"contains(displayName,'{_escapar_odata(t)}')",
+            t,
+            "id,number,displayName,email,blocked,creditLimit,balanceDue",
         )
-        return datos.get("value", [])
 
     async def obtener_cliente(self, numero: str) -> dict[str, Any] | None:
         empresa = await self._ruta_empresa()
@@ -152,19 +183,12 @@ class ClienteApiV2(ClienteBC):
         palabras = [_escapar_odata(p) for p in texto.strip().split() if p]
         if not palabras:
             return []
-        empresa = await self._ruta_empresa()
-        filtro = " and ".join(f"contains(displayName,'{p}')" for p in palabras)
-        filtro = f"({filtro}) or number eq '{_escapar_odata(texto.strip())}'"
-        datos = await self._peticion(
-            "GET",
-            f"{empresa}/items",
-            params={
-                "$filter": filtro,
-                "$top": 10,
-                "$select": "id,number,displayName,type,blocked,inventory,unitPrice,baseUnitOfMeasureCode",
-            },
+        return await self._buscar(
+            "items",
+            " and ".join(f"contains(displayName,'{p}')" for p in palabras),
+            texto.strip(),
+            "id,number,displayName,type,blocked,inventory,unitPrice,baseUnitOfMeasureCode",
         )
-        return datos.get("value", [])
 
     async def obtener_articulo(self, numero: str) -> dict[str, Any] | None:
         empresa = await self._ruta_empresa()

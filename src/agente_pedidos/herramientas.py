@@ -23,32 +23,48 @@ from .bc.base import ClienteBC, ErrorBC
 
 
 def crear_herramientas_lectura(bc: ClienteBC) -> list[FunctionTool]:
-    """Herramientas de solo lectura: el modelo puede llamarlas sin aprobación."""
+    """Herramientas de solo lectura: el modelo puede llamarlas sin aprobación.
+
+    Como la de escritura, devuelven los errores del ERP como datos (``{"error": ...}``): así el
+    modelo sabe que ha fallado el sistema, y no el nombre que le dieron, y puede explicarlo.
+    """
 
     @tool(name="buscar_clientes", description="Busca clientes de Business Central por nombre o número. Devuelve hasta 10 candidatos.")
     async def buscar_clientes(
         texto: Annotated[str, Field(description="Texto a buscar en el nombre o el número de cliente")],
-    ) -> list[dict[str, Any]]:
-        return _resumir_clientes(await bc.buscar_clientes(texto))
+    ) -> list[dict[str, Any]] | dict[str, str]:
+        try:
+            return _resumir_clientes(await bc.buscar_clientes(texto))
+        except ErrorBC as error:
+            return {"error": str(error)}
 
     @tool(name="obtener_cliente", description="Devuelve la ficha de un cliente de Business Central a partir de su número exacto.")
     async def obtener_cliente(
         numero: Annotated[str, Field(description="Número de cliente, por ejemplo 10000")],
     ) -> dict[str, Any] | None:
-        cliente = await bc.obtener_cliente(numero)
+        try:
+            cliente = await bc.obtener_cliente(numero)
+        except ErrorBC as error:
+            return {"error": str(error)}
         return _resumir_clientes([cliente])[0] if cliente else None
 
     @tool(name="buscar_articulos", description="Busca artículos de Business Central por palabras clave (modelo, color, tipo). Devuelve hasta 10 candidatos con precio y existencias.")
     async def buscar_articulos(
         texto: Annotated[str, Field(description="Palabras clave a buscar en el número o la descripción del artículo")],
-    ) -> list[dict[str, Any]]:
-        return _resumir_articulos(await bc.buscar_articulos(texto))
+    ) -> list[dict[str, Any]] | dict[str, str]:
+        try:
+            return _resumir_articulos(await bc.buscar_articulos(texto))
+        except ErrorBC as error:
+            return {"error": str(error)}
 
     @tool(name="obtener_articulo", description="Devuelve la ficha de un artículo de Business Central a partir de su número exacto.")
     async def obtener_articulo(
         numero: Annotated[str, Field(description="Número de artículo, por ejemplo 1900-S")],
     ) -> dict[str, Any] | None:
-        articulo = await bc.obtener_articulo(numero)
+        try:
+            articulo = await bc.obtener_articulo(numero)
+        except ErrorBC as error:
+            return {"error": str(error)}
         return _resumir_articulos([articulo])[0] if articulo else None
 
     return [buscar_clientes, obtener_cliente, buscar_articulos, obtener_articulo]

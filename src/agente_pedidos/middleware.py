@@ -47,14 +47,24 @@ class AuditoriaHerramientas(FunctionMiddleware):
         argumentos = context.arguments
         if not isinstance(argumentos, dict):
             argumentos = {"valor": str(argumentos)}
-        await call_next()
-        self.registrar({
-            "instante": inicio.isoformat(),
-            "herramienta": context.function.name,
-            "argumentos": argumentos,
-            "resultado": _resumir(context.result),
-            "duracion_ms": int((datetime.now(timezone.utc) - inicio).total_seconds() * 1000),
-        })
+        fallo: str | None = None
+        try:
+            await call_next()
+        except Exception as error:
+            fallo = f"{type(error).__name__}: {error}"
+            raise
+        finally:
+            # También se registra la herramienta que falla: en un ERP, el intento cuenta tanto como el éxito.
+            evento: dict[str, Any] = {
+                "instante": inicio.isoformat(),
+                "herramienta": context.function.name,
+                "argumentos": argumentos,
+                "resultado": None if fallo else _resumir(context.result),
+                "duracion_ms": int((datetime.now(timezone.utc) - inicio).total_seconds() * 1000),
+            }
+            if fallo:
+                evento["error"] = fallo
+            self.registrar(evento)
 
     def registrar(self, evento: dict[str, Any]) -> None:
         """Añade un evento al registro (herramientas y también decisiones como una aprobación denegada)."""

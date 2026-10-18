@@ -45,14 +45,14 @@ Funciona **sin ninguna credencial** en modo demo (modelo simulado + Business Cen
 | **Acceso a Business Central** | `src/agente_pedidos/bc/` | Interfaz común `ClienteBC`; `ClienteApiV2` (API v2.0 real, OAuth cliente-credenciales) y `ClienteDemo` (datos simulados) |
 | **Salida estructurada** | `src/agente_pedidos/esquemas.py` | Modelos Pydantic: `PedidoInterpretado`, `PedidoValidado`, `DecisionHumana`, `ResultadoPedido`; el intérprete responde con `options={"response_format": PedidoInterpretado}` |
 | **Sesión / memoria** (`AgentSession`) | `agentes.py`, `cli.py` (comando `chat`) | El historial de la conversación; la aprobación se responde en la misma sesión |
-| **Middleware** | `src/agente_pedidos/middleware.py` | `AuditoriaHerramientas` (registro JSONL de cada herramienta), `SoloLectura` (bloquea escrituras por política), `PresupuestoLlamadas` (tope de llamadas al modelo) |
+| **Middleware** | `src/agente_pedidos/middleware.py` | `AuditoriaHerramientas` (registro JSONL de cada herramienta, también de las que fallan), `SoloLectura` (bloquea escrituras por política), `PresupuestoLlamadas` (tope de llamadas al modelo) |
 | **Reglas de negocio deterministas** | `src/agente_pedidos/politicas.py` | Umbral de importe, cliente bloqueado, existencias, crédito, dudas: aquí decide el código |
 | **Workflow** con aprobación humana y **checkpoints** | `src/agente_pedidos/workflow.py` | `WorkflowBuilder` con aristas condicionales, `request_info` para la parada humana, `FileCheckpointStorage` para reanudar horas después y en otro proceso |
 | **Observabilidad** (trazas y coste) | `src/agente_pedidos/observabilidad.py` | `configure_otel_providers` (OpenTelemetry → Aspire, consola o Application Insights) y `ContadorCoste` (tokens → euros) |
 | **MCP** | `src/agente_pedidos/mcp_server.py` | Servidor MCP opcional con las lecturas del ERP y `MCPStdioTool` para consumirlo desde el agente |
 | **DevUI** | `devui/` | Entidades para la interfaz de pruebas del framework (beta) |
 | **Línea de comandos** | `src/agente_pedidos/cli.py` | `demo`, `procesar`, `pendientes`, `reanudar`, `chat`, `grafo` |
-| **Pruebas** | `tests/` | 27 pruebas sin modelo real ni ERP real (incluida la reanudación desde checkpoint) |
+| **Pruebas** | `tests/` | 38 pruebas sin modelo real ni ERP real (incluida la reanudación desde checkpoint) |
 
 ## 2. Los escenarios y por qué este
 
@@ -190,7 +190,7 @@ BC_COMPANY_NAME=<nombre exacto de la empresa, p. ej. CRONUS ES>
 
 7. Prueba primero en solo lectura y con el modelo simulado: `AGENTE_SOLO_LECTURA=1 python -m agente_pedidos chat "Empresa: <un cliente de tu sandbox>. Necesito 2 <un artículo>"`. Después, `procesar` con un correo propio.
 
-Endpoints que usa `cliente_api.py` (todos estándar, sin extensiones AL): `GET companies`, `GET customers` y `GET items` con filtros OData, `POST salesOrders` y `POST salesOrders({id})/salesOrderLines`. Límites a tener en cuenta: 300 peticiones por minuto en sandbox, 600 en producción.
+Endpoints que usa `cliente_api.py` (todos estándar, sin extensiones AL): `GET companies`, `GET customers` y `GET items` con filtros OData, `POST salesOrders` y `POST salesOrders({id})/salesOrderLines`. Las búsquedas filtran por nombre (`contains(displayName,…)`) y, solo si el texto parece un código (`10000`, `1928-S`), hacen una segunda petición por `number eq` y unen los resultados: la API **no admite `or` entre campos distintos** (responde `501 Not Implemented`). Límites a tener en cuenta: 300 peticiones por minuto en sandbox, 600 en producción.
 
 ## 9. Observabilidad: trazas y coste
 
@@ -210,7 +210,7 @@ APPLICATIONINSIGHTS_CONNECTION_STRING="InstrumentationKey=..." python -m agente_
 
 Verás spans `invoke_agent interprete`, `chat <modelo>` y `execute_tool buscar_clientes`, con las métricas `gen_ai.client.token.usage` y `gen_ai.client.operation.duration`. El contenido de los mensajes solo se exporta con `ENABLE_SENSITIVE_DATA=1` (no lo actives en producción).
 
-Coste: el framework cuenta tokens (`respuesta.usage_details`), pero no sabe precios. `ContadorCoste` los convierte a euros con `PRECIO_ENTRADA_EUR_POR_MILLON` y `PRECIO_SALIDA_EUR_POR_MILLON`; cada comando imprime el resumen al final. Además, `auditoria.jsonl` guarda una línea por herramienta ejecutada (instante, nombre, argumentos, resumen del resultado, duración).
+Coste: el framework cuenta tokens (`respuesta.usage_details`), pero no sabe precios. `ContadorCoste` los convierte a euros con `PRECIO_ENTRADA_EUR_POR_MILLON` y `PRECIO_SALIDA_EUR_POR_MILLON`; cada comando imprime el resumen al final. Además, `auditoria.jsonl` guarda una línea por herramienta ejecutada (instante, nombre, argumentos, resumen del resultado, duración), también cuando falla (con `error` y sin resultado), y las aprobaciones denegadas por falta de terminal (`evento: aprobacion_denegada`).
 
 ## 10. DevUI y servidor MCP (opcionales)
 
@@ -231,7 +231,7 @@ Aparecen dos entidades: el agente `interprete` y el workflow `pedidos`, ambos co
 python -m pytest -q
 ```
 
-27 pruebas, todas sin modelo real ni Business Central real (modelo simulado y `ClienteDemo`): reglas de negocio, cliente de demostración, los cuatro recorridos del workflow (creación automática, aprobación con reanudación desde checkpoint en una instancia nueva, rechazo humano, rechazo por validación), aprobación a nivel de agente (aceptar, rechazar y confirmar en texto tras crear el pedido), aprobación por consola sin terminal o con EOF (se deniega y se audita), middleware de solo lectura y de presupuesto, lectura de `.env` (comentarios al final de línea), y la integración MCP (se omite si `mcp` no está instalado).
+38 pruebas, todas sin modelo real ni Business Central real (modelo simulado y `ClienteDemo`): reglas de negocio, cliente de demostración, los cuatro recorridos del workflow (creación automática, aprobación con reanudación desde checkpoint en una instancia nueva, rechazo humano, rechazo por validación), aprobación a nivel de agente (aceptar, rechazar y confirmar en texto tras crear el pedido), aprobación por consola sin terminal o con EOF (se deniega y se audita), middleware de solo lectura y de presupuesto, lectura de `.env` (comentarios al final de línea), filtros del cliente de la API v2.0 contra una API simulada con `httpx.MockTransport` (sin `or` entre campos), errores del ERP como datos en las lecturas, auditoría de herramientas que fallan, y la integración MCP (se omite si `mcp` no está instalado).
 
 ## 12. Estructura del repositorio y qué hace cada archivo
 
@@ -275,15 +275,15 @@ agente-pedidos-business-central/
 Detalle de cada pieza:
 
 - **`modelo.py`**: `crear_cliente_modelo(papel)` elige el cliente por `MODELO_PROVEEDOR`. `ClienteSimulado` hereda de `BaseChatClient` con las capas `FunctionInvocationLayer`, `ChatMiddlewareLayer` y `ChatTelemetryLayer` (igual que los clientes reales del framework) e implementa `_inner_get_response`: imita a un modelo que primero llama a `buscar_clientes`, luego a `buscar_articulos` por cada línea y al final devuelve el JSON del pedido (o, en el papel de asistente, pide crear el pedido). Así el bucle, las aprobaciones y las trazas funcionan sin red.
-- **`herramientas.py`**: funciones `async` decoradas con `@tool(name, description, approval_mode)`; los parámetros llevan `Annotated[str, Field(description=...)]` para que el modelo entienda qué pasar. Reducen lo que ve el modelo a los campos necesarios (ingeniería de contexto). Los errores del ERP vuelven como datos (`{"error": ...}`), no como excepciones.
+- **`herramientas.py`**: funciones `async` decoradas con `@tool(name, description, approval_mode)`; los parámetros llevan `Annotated[str, Field(description=...)]` para que el modelo entienda qué pasar. Reducen lo que ve el modelo a los campos necesarios (ingeniería de contexto). Los errores del ERP (`ErrorBC`) vuelven como datos (`{"error": ...}`), no como excepciones, en las cuatro lecturas y en la escritura: así el modelo sabe que ha fallado el sistema y no el dato que le dieron.
 - **`esquemas.py`**: `PedidoInterpretado` (lo que el modelo entiende; solo interpreta), `PedidoValidado` (lo que el código decide; incluye `resumen_para_humano()`), `DecisionHumana` y `ResultadoPedido`.
 - **`politicas.py`**: `Politica` (umbral, aprobar siempre, existencias, clientes vetados) y `validar_pedido()`: comprueba cliente, artículos, cantidades, existencias, total y crédito, acumula errores, avisos y motivos de aprobación y fija la ruta. Es la «delegación basada en reglas» del libro de Dibia (cap. 2.5.2).
-- **`middleware.py`**: tres clases que heredan de `FunctionMiddleware` o `ChatMiddleware` y sobrescriben `process(context, call_next)`. Bloquear = no llamar a `call_next()` y poner `context.result`.
+- **`middleware.py`**: tres clases que heredan de `FunctionMiddleware` o `ChatMiddleware` y sobrescriben `process(context, call_next)`. Bloquear = no llamar a `call_next()` y poner `context.result`. La auditoría envuelve `call_next()` en `try/finally` para registrar también las herramientas que lanzan una excepción.
 - **`agentes.py`**: tres `Agent` con nombre, descripción, instrucciones leídas de `prompts/`, herramientas, middleware y opciones por defecto (temperatura).
 - **`workflow.py`**: nodos `Executor` con métodos `@handler` tipados (`Interpretar`, `Validar`, `AprobacionHumana`, `CrearPedido`, `Rechazar`, `Redactar`), un `@response_handler` que recibe la decisión humana, `WorkflowBuilder` con `add_edge`, `add_switch_case_edge_group` (`Case`/`Default`) y condiciones en código, `FileCheckpointStorage` y `register_checkpoint_type` para que los objetos propios se restauren desde el checkpoint. `construir_workflow()` monta todo y `dibujar_mermaid()` lo pinta.
 - **`observabilidad.py`**: `configurar_observabilidad()` llama a `configure_otel_providers` o a `configure_azure_monitor` según las variables; `ContadorCoste` suma `usage_details`.
 - **`cli.py`**: lee `.env`, construye el ERP (`BC_MODO`), el middleware y el workflow; `procesar` consume los eventos del workflow (`executor_invoked`, `request_info`, `output`), resuelve el checkpoint de la pausa con `resolve_pause_checkpoint_id` y reanuda con `workflow.run(responses=...)` o, en otro proceso, con `workflow.run(checkpoint_id=..., responses=...)`; `chat` usa `respuesta.user_input_requests` y `to_function_approval_response(approved=...)` en la misma sesión.
-- **`bc/cliente_api.py`**: pide el token a `login.microsoftonline.com/<tenant>/oauth2/v2.0/token` con el ámbito `https://api.businesscentral.dynamics.com/.default`, localiza la empresa, busca con `$filter` OData, crea la cabecera del pedido y después las líneas, y vuelve a leer el pedido con `$expand=salesOrderLines`.
+- **`bc/cliente_api.py`**: pide el token a `login.microsoftonline.com/<tenant>/oauth2/v2.0/token` con el ámbito `https://api.businesscentral.dynamics.com/.default`, localiza la empresa, busca con `$filter` OData (por nombre y, si el texto parece un código, también por número, en dos peticiones: nunca `or` entre campos), crea la cabecera del pedido y después las líneas, y vuelve a leer el pedido con `$expand=salesOrderLines`.
 
 ## 13. Limitaciones y siguientes pasos
 

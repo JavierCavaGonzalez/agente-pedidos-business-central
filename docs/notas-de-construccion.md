@@ -87,6 +87,36 @@ ValueError: invalid literal for int() with base 10: '12    # tope de llamadas al
 
 **Pruebas nuevas** (`tests/test_aprobacion_consola.py`, 2 casos): `procesar` con stdin por tubería que contiene «s» deniega, no crea el pedido y deja la denegación en la auditoría; `chat` con una consola que devuelve EOF deniega y `crear_pedido_venta` no llega a ejecutarse. Ambas fallan con el código anterior. Total: 27 pruebas.
 
+## 2026-10-18 · Primera conexión a un sandbox real: 501 por `or` entre campos
+
+**Contexto.** Primera ejecución contra un Business Central real (sandbox TEST29, empresa CRONUS ES, `BC_MODO=api`, `AGENTE_SOLO_LECTURA=1`) con `chat "Empresa: Adatum Corporation. Necesito 2 lámparas AMSTERDAM"`.
+
+**Síntoma.** El token de Entra ID y la empresa se obtenían bien, pero `buscar_clientes` y `buscar_articulos` fallaban, y el agente le pedía a la persona que «confirmara el nombre del cliente». Llamando al cliente directamente, sin el modelo, salió el error:
+
+```
+Business Central respondió 501: The 'OR' operator is not supported on distinct fields on an OData filter.
+```
+
+**Causa.** `cliente_api.py` buscaba con un solo filtro que combinaba nombre y número: `contains(displayName,'…') or number eq '…'`. La API v2.0 de Business Central no admite `or` entre campos distintos y responde `501 Not Implemented`. El ERP simulado (`ClienteDemo`) filtra en memoria y no tiene esa limitación, así que ni la demo ni las pruebas podían verlo. **Solo aparece contra un Business Central real.**
+
+**Dos fallos más que destapó.**
+
+1. **Las lecturas no devolvían los errores del ERP como datos.** Solo `crear_pedido_venta` capturaba `ErrorBC`; las cuatro lecturas dejaban pasar la excepción. El framework se la pasaba al modelo como un error genérico («raised an exception», el detalle solo se ve con `include_detailed_errors=True`). Por eso el modelo culpó al nombre del cliente en lugar de explicar que había fallado el sistema. El README ya decía que los errores volvían como datos, pero no era cierto para las lecturas.
+2. **La auditoría no registraba las herramientas que fallan.** `AuditoriaHerramientas` escribía después de `call_next()`; si la herramienta lanzaba una excepción, no quedaba ni rastro. En esa ejecución, `auditoria.jsonl` no tuvo ni una línea, aunque hubo dos llamadas al ERP real.
+
+**Corrección.**
+
+1. `cliente_api.py`: las búsquedas filtran por nombre (`contains(displayName,…)`; en artículos, una condición por palabra unida con `and`, que sí se admite al ser el mismo campo). Si el texto parece un código (`PARECE_CODIGO`: dígitos, o dígitos con sufijo como `1928-S`), se hace una segunda petición con `number eq '…'`, y se unen los resultados sin duplicados, con la coincidencia exacta primero.
+2. `herramientas.py`: las cuatro lecturas capturan `ErrorBC` y devuelven `{"error": …}`, igual que la escritura.
+3. `middleware.py`: la auditoría envuelve `call_next()` en `try/finally` y registra también las herramientas que fallan, con `error` (tipo y mensaje de la excepción) y `resultado: null`; la excepción se vuelve a lanzar sin cambios.
+
+**Pruebas nuevas (11; total 38).**
+
+- `tests/test_cliente_api.py` (6): el `ClienteApiV2` real contra una API simulada con `httpx.MockTransport` que, como la real, responde 501 si un filtro usa `or` entre campos distintos. Comprueba los filtros que se envían, la segunda petición solo para textos con forma de código, la unión sin duplicados y que un 501 llega como `ErrorBC` con su código. Con el `cliente_api.py` anterior fallan las 4 que dependen de la corrección.
+- `tests/test_errores_erp.py` (5): las cuatro lecturas devuelven `{"error": …}` ante un `ErrorBC`, y la auditoría registra con su error una herramienta que lanza una excepción inesperada. Las 5 fallan con el código anterior.
+
+**Lección.** Un ERP simulado sirve para el esqueleto, pero no reproduce las limitaciones del protocolo real (OData de Business Central). Contra el ERP real hay que probar antes las lecturas, sin el modelo, una a una.
+
 ## 2026-10-18 · Ejecuciones con el modelo real: llamadas y coste
 
 Azure OpenAI, despliegue `gpt-4.1-mini`, `BC_MODO=demo` (ERP simulado: no se escribió nada real). Las llamadas al modelo salen de las trazas (`ENABLE_CONSOLE_EXPORTERS=1`, spans `chat`); sus tokens cuadran con la línea «Coste» de la CLI. El coste está calculado con las tarifas por defecto del ejemplo (2 € por millón de tokens de entrada y 8 € por millón de salida), no con la tarifa real de Azure.
