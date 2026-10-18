@@ -389,11 +389,18 @@ h1, h2, h3 { margin: 0; }
 .tabla { width: 100%; border-collapse: collapse; font-size: var(--t-xs); }
 .tabla th { position: sticky; top: 0; background: var(--c-superficie); text-align: left; font-weight: 650; color: var(--c-texto-3); padding: 8px 10px 6px; white-space: nowrap; border-bottom: 1px solid var(--c-borde); }
 .tabla td { padding: 8px 10px; border-bottom: 1px solid var(--c-superficie-2); white-space: nowrap; }
-.tabla td.cliente { white-space: normal; min-width: 120px; }
+.tabla td.cliente { white-space: normal; }
+.estado-estrecho { display: none; }
+/* Panel de pedidos estrecho: el estado y el enlace pasan bajo el cliente */
+@media (max-width: 1500px) {
+  .col-estado { display: none; }
+  .estado-estrecho { display: block; margin-top: 4px; }
+}
 .tabla-lineas td.cliente { max-width: none; white-space: normal; }
 .tabla .num { text-align: right; }
 .tabla tr[data-elegido='true'] td { background: var(--c-tinte-azul); }
-.tabla .simulacion { color: var(--c-texto-3); }
+.tabla .simulacion, .tabla a { color: var(--c-texto-3); font-size: 0.75rem; }
+.tabla a { color: var(--c-enlace); }
 .tabla-lineas td, .tabla-lineas th { padding: 6px var(--e-1) 6px 0; }
 
 /* ── Ventanas ── */
@@ -478,7 +485,6 @@ body.inmersivo .salir-inmersivo { display: inline-flex; }
 @media (max-width: 1500px) {
   .tarjeta-aprobacion .campos { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .seguimiento-detalle { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); }
-  .col-hora { display: none; }
 }
 /* Escena estrecha: etiquetas de una sola línea para que no se pisen */
 .escena { container-type: size; }

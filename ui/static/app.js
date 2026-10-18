@@ -390,6 +390,19 @@ function tarjetaAprobacion(a, foto) {
   return tarjeta;
 }
 
+/** Estado del pedido en BC y su enlace (o «simulación»): en su columna o, si el panel es estrecho, bajo el cliente. */
+function estadoYEnlace(p) {
+  return [
+    el("span", { class: "pastilla" }, p.estado_bc),
+    el("br"),
+    p.enlace
+      ? el("a", { href: p.enlace, target: "_blank", rel: "noopener", onclick: (e) => e.stopPropagation() }, "Abrir en BC ↗")
+      : p.modo === "api"
+        ? el("span", { class: "simulacion", title: "Pedido real: el enlace solo se construye con la oficina en modo api" }, "en Business Central")
+        : el("span", { class: "simulacion", title: "Pedido de la simulación: no existe en Business Central" }, "simulación"),
+  ];
+}
+
 // --- pedidos creados hoy ----------------------------------------------------------------------------
 
 function pintarPedidos(foto) {
@@ -400,16 +413,12 @@ function pintarPedidos(foto) {
   $("pedidos-lista").replaceChildren(
     ...(filas.length
       ? filas.map((p) => el("tr", { dataset: { elegido: String(p.tarea === seguidaId) }, onclick: () => p.tarea && seguirTarea(p.tarea), style: "cursor:pointer", title: "Ver la tarea en el seguimiento" },
-          el("td", {}, el("strong", {}, p.pedido)),
-          el("td", { class: "cliente", title: p.cliente || "" }, p.cliente || "—"),
+          el("td", {}, el("strong", {}, p.pedido), el("br"), el("span", { class: "apagado" }, horaCorta(p.ts))),
+          el("td", { class: "cliente" }, p.cliente || "—", el("span", { class: "estado-estrecho" }, estadoYEnlace(p))),
           el("td", { class: "num" }, euros(p.importe)),
-          el("td", {}, el("span", { class: "pastilla" }, p.estado_bc)),
-          el("td", { class: "col-hora" }, horaCorta(p.ts)),
-          el("td", {}, p.enlace
-            ? el("a", { href: p.enlace, target: "_blank", rel: "noopener", onclick: (e) => e.stopPropagation() }, "Abrir en Business Central ↗")
-            : el("span", { class: "simulacion", title: "Pedido de la simulación: no existe en Business Central" }, "simulación")),
+          el("td", { class: "col-estado" }, estadoYEnlace(p)),
         ))
-      : [el("tr", {}, el("td", { colspan: "6", class: "vacio" }, busqueda ? "Ningún pedido coincide con la búsqueda." : "Todavía no hay pedidos hoy."))]),
+      : [el("tr", {}, el("td", { colspan: "4", class: "vacio" }, busqueda ? "Ningún pedido coincide con la búsqueda." : "Todavía no hay pedidos hoy."))]),
   );
 }
 
@@ -523,7 +532,7 @@ function detalleDe(foto) {
           agente.pedidos_hoy.length
             ? el("table", { class: "tabla-mini" }, el("tbody", {}, agente.pedidos_hoy.map((p) => el("tr", {},
                 el("td", {}, el("strong", {}, p.pedido), el("br"), el("span", { class: "apagado" }, p.cliente || "")),
-                el("td", { class: "num" }, euros(p.importe), el("br"), p.enlace ? el("a", { href: p.enlace, target: "_blank", rel: "noopener" }, "Abrir en Business Central ↗") : el("span", { class: "apagado" }, "simulación")),
+                el("td", { class: "num" }, euros(p.importe), el("br"), p.enlace ? el("a", { href: p.enlace, target: "_blank", rel: "noopener" }, "Abrir en Business Central ↗") : el("span", { class: "apagado" }, p.modo === "api" ? "en Business Central" : "simulación")),
               ))))
             : vacio("Ninguno hoy.")),
         el("div", { class: "detalle-acciones" },
