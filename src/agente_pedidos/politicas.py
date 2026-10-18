@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from .bc.base import ClienteBC
 from .esquemas import LineaValidada, PedidoInterpretado, PedidoValidado
+from .formato import euros
 
 
 @dataclass
@@ -110,7 +111,7 @@ async def validar_pedido(pedido: PedidoInterpretado, bc: ClienteBC, politica: Po
         limite = float(cliente.get("creditLimit", 0) or 0)
         saldo = float(cliente.get("balanceDue", 0) or 0)
         if limite > 0 and saldo + resultado.total > limite:
-            motivo = f"Supera el límite de crédito ({saldo:.2f} pendiente + {resultado.total:.2f} > {limite:.2f})"
+            motivo = f"Supera el límite de crédito ({euros(saldo)} pendiente + {euros(resultado.total)} > {euros(limite)})"
             resultado.avisos.append(motivo)
             resultado.motivos_aprobacion.append(motivo)
 
@@ -124,7 +125,7 @@ async def validar_pedido(pedido: PedidoInterpretado, bc: ClienteBC, politica: Po
         resultado.motivos_aprobacion.append("La política exige aprobación humana para toda escritura en el ERP")
     if resultado.total >= politica.umbral_aprobacion:
         resultado.motivos_aprobacion.append(
-            f"El importe {resultado.total:.2f} supera el umbral de {politica.umbral_aprobacion:.2f}"
+            f"El importe {euros(resultado.total)} supera el umbral de {euros(politica.umbral_aprobacion)}"
         )
     resultado.requiere_aprobacion = bool(resultado.motivos_aprobacion) or bool(resultado.errores)
     resultado.apto_para_crear = not resultado.errores and bool(resultado.lineas)

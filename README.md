@@ -26,11 +26,12 @@ Funciona **sin ninguna credencial** en modo demo (modelo simulado + Business Cen
 8. [Conectar un sandbox de Business Central](#8-conectar-un-sandbox-de-business-central)
 9. [Observabilidad: trazas y coste](#9-observabilidad-trazas-y-coste)
 10. [DevUI y servidor MCP (opcionales)](#10-devui-y-servidor-mcp-opcionales)
-11. [Pruebas](#11-pruebas)
-12. [Estructura del repositorio y qué hace cada archivo](#12-estructura-del-repositorio-y-qué-hace-cada-archivo)
-13. [Limitaciones y siguientes pasos](#13-limitaciones-y-siguientes-pasos)
-14. [Para construirlo con Claude Code](#14-para-construirlo-con-claude-code)
-15. [Licencia](#15-licencia)
+11. [Oficina de agentes (interfaz web)](#11-oficina-de-agentes-interfaz-web)
+12. [Pruebas](#12-pruebas)
+13. [Estructura del repositorio y qué hace cada archivo](#13-estructura-del-repositorio-y-qué-hace-cada-archivo)
+14. [Limitaciones y siguientes pasos](#14-limitaciones-y-siguientes-pasos)
+15. [Para construirlo con Claude Code](#15-para-construirlo-con-claude-code)
+16. [Licencia](#16-licencia)
 
 ---
 
@@ -52,7 +53,8 @@ Funciona **sin ninguna credencial** en modo demo (modelo simulado + Business Cen
 | **MCP** | `src/agente_pedidos/mcp_server.py` | Servidor MCP opcional con las lecturas del ERP y `MCPStdioTool` para consumirlo desde el agente |
 | **DevUI** | `devui/` | Entidades para la interfaz de pruebas del framework (beta) |
 | **Línea de comandos** | `src/agente_pedidos/cli.py` | `demo`, `procesar`, `pendientes`, `reanudar`, `chat`, `grafo` |
-| **Pruebas** | `tests/` | 56 pruebas sin modelo real ni ERP real (incluida la reanudación desde checkpoint) |
+| **Oficina de agentes** (interfaz web) | `ui/`, `src/agente_pedidos/eventos.py`, `src/agente_pedidos/oficina.py` | Registro de eventos (`eventos.jsonl`), backend FastAPI con SSE y torre de control con la oficina en 3D isométrico: estado de cada agente, seguimiento y aprobación de tareas, KPI de coste y enlaces a Business Central (sección 11) |
+| **Pruebas** | `tests/` | 103 pruebas sin modelo real ni ERP real (incluida la reanudación desde checkpoint y la oficina de extremo a extremo) |
 
 ## 2. Los escenarios y por qué este
 
@@ -247,23 +249,64 @@ Aparecen dos entidades: el agente `interprete` y el workflow `pedidos`, ambos co
 
 **Servidor MCP** (`src/agente_pedidos/mcp_server.py`, requiere `pip install mcp`): expone las cuatro lecturas del ERP simulado como herramientas MCP por stdio. `crear_herramienta_mcp()` devuelve un `MCPStdioTool` para que el agente las consuma por MCP en lugar de como funciones locales (la prueba `tests/test_mcp.py` lo ejecuta). También puedes conectarlo a VS Code, Claude o cualquier host MCP con el comando `python -m agente_pedidos.mcp_server` y `PYTHONPATH=src`.
 
-## 11. Pruebas
+## 11. Oficina de agentes (interfaz web)
+
+Una **torre de control** con la oficina en 3D isométrico en el centro (three.js, con la paleta y la tipografía de javiercava.com). En la escena están el despacho del **director** (la persona), la mesa del Agente de Pedidos con una etiqueta flotante de estado (libre, trabajando, esperando aprobación, error o detenido), tres mesas **vacantes** (Compras, Finanzas, Almacén), la sala de reuniones y el edificio de **Business Central**, al que viaja un punto de oro cada vez que se crea un pedido. La escena se gira y se acerca con el ratón o el teclado, y al pulsar una mesa se selecciona.
+
+Alrededor, los paneles:
+- **KPI en vivo**: agentes activos, tareas, preguntas al agente (aparte: no cuentan como tareas ni como carga), aprobaciones pendientes, escrituras en el ERP, coste y llamadas al modelo de hoy.
+- **Feed de actividad**, con filtros por BC, tareas, aprobaciones y modelo, y los botones «Asignar tarea» y «Preguntar al agente».
+- **Detalle de lo seleccionado**: carga, coste frente al presupuesto, herramientas, pedidos con su enlace a Business Central, y Detener o Activar.
+- **Seguimiento de tarea**: Recibido → Interpretado → Validado → Aprobación → Creado en BC → Respondido, con los tiempos, las líneas y la **tarjeta de aprobación** cuando toca.
+- **Pedidos creados hoy**.
+
+![Oficina de agentes a 1600 × 1000: el agente espera la aprobación de un pedido de 5.875,60 €, con el feed, los KPI del día y el pedido 101024 creado en el sandbox](docs/oficina/captura.png)
+
+A 1280 × 800 los paneles se compactan y la página no se desplaza:
+
+![Oficina de agentes a 1280 × 800, en el mismo estado](docs/oficina/captura-1280.png)
+
+```bash
+pip install -r requirements-ui.txt        # o: pip install -e ".[ui]"
+export PYTHONPATH=src                     # Windows (PowerShell): $env:PYTHONPATH = "src"
+python -m agente_pedidos.oficina          # http://127.0.0.1:8765, con BC_MODO y MODELO_PROVEEDOR de .env
+python -m agente_pedidos.oficina --bc demo                    # fuerza el ERP simulado en esta sesión
+python -m agente_pedidos.oficina --bc demo --modelo simulado  # sin red y sin coste
+```
+
+Cómo funciona:
+
+- **Nada sin rastro.** El agente escribe cada paso en `eventos.jsonl` (tarea iniciada, pasos del workflow, llamadas al modelo con tokens y coste, herramientas, aprobaciones, escrituras y bloqueos en el ERP, errores). La interfaz solo dibuja lo que hay ahí y en los checkpoints. `auditoria.jsonl` sigue siendo el registro de auditoría.
+- **La interfaz no ejecuta agentes.** «Asignar tarea» lanza `procesar … --aprobar pendiente` y «Aprobar»/«Denegar» lanzan `reanudar` como subprocesos. Aprobar desde la tarjeta es exactamente lo mismo que hacerlo desde la terminal, y queda en la auditoría igual.
+- **Protecciones**: una aprobación ya resuelta, o con un `reanudar` en marcha, se rechaza (409); una aprobación pedida con el ERP simulado no se puede resolver contra el real; un agente detenido no recibe tareas nuevas.
+- Con el ERP simulado, la oficina guarda los pedidos de la simulación en `ui/bandeja/erp_demo_pedidos.json` (`BC_DEMO_PEDIDOS`), para que `procesar` y `reanudar`, que son procesos distintos, vean los mismos pedidos.
+- **Enlaces a Business Central.** Con `BC_MODO=api`, el backend construye el enlace a la ficha de cada pedido (página 42 filtrada por número) a partir de `BC_TENANT_ID`, `BC_ENVIRONMENT` y `BC_COMPANY_NAME`. En simulación no hay enlace. El navegador nunca recibe credenciales.
+- **Preguntar al agente** lanza el comando `chat` sin terminal y con `CHAT_APROBAR=no`. El agente responde consultando, y la respuesta y su coste aparecen en el feed. Para preguntas sobre la propia oficina («¿en qué estado está el pedido de Adatum Corporation que espera aprobación?») usa la herramienta de solo lectura `estado_oficina`, que lee los checkpoints y `eventos.jsonl` y da las aprobaciones pendientes con su importe, su motivo y desde cuándo esperan, las tareas del día con su paso actual y los pedidos creados hoy. Los pedidos solo se crean asignando una tarea, con su aprobación.
+- El presupuesto de coste del día se fija con `OFICINA_PRESUPUESTO_DIA_EUR`, que por defecto vale 1 €.
+- Solo escucha en `127.0.0.1`: esta versión no tiene autenticación y el nombre del aprobador es un campo de texto, no una identidad verificada.
+- **Verificado con el sandbox desde la propia oficina** (`--bc api`): «Asignar tarea» con el correo 06, aprobación desde la tarjeta y pedido 101024 en Business Central, con su enlace y su escritura en la auditoría y en los eventos. Una aprobación pedida en simulación sale desactivada y el backend la rechaza con un 409 (ver [`docs/oficina/NOTAS.md`](docs/oficina/NOTAS.md)).
+- **Sin compilación ni Node**: three.js 0.186, las fuentes y los iconos van copiados en `ui/static/vendor/`, `ui/static/fuentes/` y `ui/static/img/`. Sin WebGL, los paneles funcionan igual.
+
+Especificación: [`docs/oficina/ESPECIFICACION.md`](docs/oficina/ESPECIFICACION.md). La dirección visual vigente, que sustituye a la sección 4 de la especificación, está en [`docs/oficina/DIRECCION-VISUAL.md`](docs/oficina/DIRECCION-VISUAL.md). Decisiones y limitaciones: [`docs/oficina/NOTAS.md`](docs/oficina/NOTAS.md).
+
+## 12. Pruebas
 
 ```bash
 python -m pytest -q
 ```
 
-56 pruebas, todas sin modelo real ni Business Central real (modelo simulado y `ClienteDemo`): reglas de negocio, cliente de demostración, los cuatro recorridos del workflow (creación automática, aprobación con reanudación desde checkpoint en una instancia nueva, rechazo humano, rechazo por validación), aprobación a nivel de agente (aceptar, rechazar y confirmar en texto tras crear el pedido), aprobación por consola sin terminal o con EOF (se deniega y se audita), middleware de solo lectura y de presupuesto, lectura de `.env` (comentarios al final de línea), filtros del cliente de la API v2.0 contra una API simulada con `httpx.MockTransport` que se comporta como la real (sin `or` entre campos, `contains` sensible a mayúsculas y tildes, `blocked` como `_x0020_`), errores del ERP como datos en las lecturas, auditoría de herramientas que fallan y de las escrituras (desde el workflow y desde `chat`, sin duplicar líneas), ciclo de vida de las aprobaciones guardadas (`pendientes` sin las resueltas, `reanudar` rechaza un checkpoint resuelto), idempotencia de pedidos (mismo cliente y referencia externa), y la integración MCP (se omite si `mcp` no está instalado).
+103 pruebas, todas sin modelo real ni Business Central real (modelo simulado y `ClienteDemo`): reglas de negocio, cliente de demostración, los cuatro recorridos del workflow (creación automática, aprobación con reanudación desde checkpoint en una instancia nueva, rechazo humano, rechazo por validación), aprobación a nivel de agente (aceptar, rechazar y confirmar en texto tras crear el pedido), aprobación por consola sin terminal o con EOF (se deniega y se audita), middleware de solo lectura y de presupuesto, lectura de `.env` (comentarios al final de línea), filtros del cliente de la API v2.0 contra una API simulada con `httpx.MockTransport` que se comporta como la real (sin `or` entre campos, `contains` sensible a mayúsculas y tildes, `blocked` como `_x0020_`), errores del ERP como datos en las lecturas, auditoría de herramientas que fallan y de las escrituras (desde el workflow y desde `chat`, sin duplicar líneas), ciclo de vida de las aprobaciones guardadas (`pendientes` sin las resueltas, `reanudar` rechaza un checkpoint resuelto), idempotencia de pedidos (mismo cliente y referencia externa), la capa de eventos (secuencias de `procesar` y `reanudar`), la oficina (derivación de estados, tablero, seguimiento por pasos, feed, pedidos del día con su enlace a Business Central, «Preguntar al agente» y su herramienta `estado_oficina`, preguntas fuera de las tareas, importes en formato español, 409 y una prueba de extremo a extremo con subprocesos reales y el ERP simulado) y la integración MCP (se omite si `mcp` no está instalado).
 
-## 12. Estructura del repositorio y qué hace cada archivo
+## 13. Estructura del repositorio y qué hace cada archivo
 
 ```
 agente-pedidos-business-central/
 ├── README.md                     ← este documento
 ├── LICENSE                       ← MIT
 ├── requirements.txt / pyproject.toml
+├── requirements-ui.txt           ← dependencias de la oficina (FastAPI, uvicorn, SSE, watchfiles)
 ├── .env.example                  ← todas las variables, sin valores secretos
-├── .gitignore                    ← excluye .env, checkpoints y auditorías
+├── .gitignore                    ← excluye .env, checkpoints, auditorías, eventos y ui/bandeja
 ├── prompts/
 │   ├── interprete.md             ← instrucciones del agente intérprete
 │   ├── redactor.md               ← instrucciones del agente redactor
@@ -273,7 +316,8 @@ agente-pedidos-business-central/
 ├── docs/
 │   ├── arquitectura.md           ← diagramas (esqueleto, recorrido, workflow)
 │   ├── PROMPT-CLAUDE-CODE.md     ← prompt para reconstruir el proyecto con Claude Code
-│   └── notas-de-construccion.md  ← fallos encontrados al probarlo con un modelo real y cómo se corrigieron
+│   ├── notas-de-construccion.md  ← fallos encontrados al probarlo con un modelo real y cómo se corrigieron
+│   └── oficina/                  ← especificación, notas y captura de la oficina de agentes
 ├── src/agente_pedidos/
 │   ├── __main__.py               ← permite `python -m agente_pedidos`
 │   ├── cli.py                    ← comandos demo / procesar / pendientes / reanudar / chat / grafo
@@ -285,12 +329,17 @@ agente-pedidos-business-central/
 │   ├── middleware.py             ← auditoría, solo lectura, presupuesto de llamadas
 │   ├── workflow.py               ← el grafo: nodos, aristas, request_info, checkpoints
 │   ├── observabilidad.py         ← OpenTelemetry y contador de coste
+│   ├── eventos.py                ← registro operativo eventos.jsonl (lo que dibuja la oficina)
+│   ├── oficina.py                ← `python -m agente_pedidos.oficina`: arranca la interfaz web
 │   ├── mcp_server.py             ← servidor MCP opcional y MCPStdioTool
 │   └── bc/
 │       ├── base.py               ← interfaz ClienteBC y ErrorBC
 │       ├── cliente_api.py        ← Business Central real: API v2.0 + OAuth client credentials
 │       ├── cliente_demo.py       ← Business Central simulado en memoria
 │       └── datos_demo.json       ← clientes y artículos de demostración (estilo CRONUS)
+├── ui/
+│   ├── backend/                  ← FastAPI: estado derivado de eventos, SSE, tareas, aprobaciones
+│   └── static/                   ← frontend sin compilación (HTML, CSS, módulos ES, three.js local)
 └── tests/                        ← pruebas (pytest, sin red)
 ```
 
@@ -307,7 +356,7 @@ Detalle de cada pieza:
 - **`cli.py`**: lee `.env`, construye el ERP (`BC_MODO`), el middleware y el workflow; `procesar` consume los eventos del workflow (`executor_invoked`, `request_info`, `output`), resuelve el checkpoint de la pausa con `resolve_pause_checkpoint_id` y reanuda con `workflow.run(responses=...)` o, en otro proceso, con `workflow.run(checkpoint_id=..., responses=...)`; `chat` usa `respuesta.user_input_requests` y `to_function_approval_response(approved=...)` en la misma sesión.
 - **`bc/cliente_api.py`**: pide el token a `login.microsoftonline.com/<tenant>/oauth2/v2.0/token` con el ámbito `https://api.businesscentral.dynamics.com/.default`, localiza la empresa, busca con `$filter` OData (por nombre y, si el texto parece un código, también por número, en dos peticiones: nunca `or` entre campos), crea la cabecera del pedido y después las líneas, y vuelve a leer el pedido con `$expand=salesOrderLines`. La parte común de la escritura está en `bc/base.py` (`ClienteBC.crear_pedido_venta`): antes de crear comprueba si ya existe un pedido del cliente con la misma referencia externa (si existe, `PedidoDuplicado`, un error de datos, y no se crea otro) y registra la escritura en la auditoría.
 
-## 13. Limitaciones y siguientes pasos
+## 14. Limitaciones y siguientes pasos
 
 - **Modelo simulado**: imita a un modelo con reglas (un diccionario de palabras y expresiones regulares). Sirve para ver el esqueleto completo y para las pruebas, no para medir la calidad de interpretación; con correos distintos a los de ejemplo se equivocará. Con un modelo real, el intérprete usa las instrucciones de `prompts/interprete.md`.
 - **Business Central**: el cliente real cubre clientes, artículos y pedidos de venta de la API v2.0 estándar. No registra (post) pedidos ni toca otras entidades, a propósito. La identidad de aplicación debe tener solo los permisos necesarios; el ejemplo no los crea por ti.
@@ -317,10 +366,10 @@ Detalle de cada pieza:
 - **Lo aprendido al probarlo de verdad**: [`docs/notas-de-construccion.md`](docs/notas-de-construccion.md) recoge cada fallo encontrado al pasar del modo demo a un modelo real y a un sandbox de Business Central (lectura de `.env`, prompts, el 501 por `or` entre campos, las rarezas de la API, la auditoría de las escrituras, los checkpoints ya resueltos, la idempotencia), con su causa, la corrección, las pruebas y lo que costó cada ejecución.
 - **Siguientes pasos razonables**: desplegar como hosted agent en Foundry (`azd`), exportar trazas a Application Insights, añadir una suite de evaluación con correos reales anonimizados (desarrollo guiado por evaluación, cap. 10 del libro) y sustituir la entrada por fichero por un buzón real (Microsoft Graph).
 
-## 14. Para construirlo con Claude Code
+## 15. Para construirlo con Claude Code
 
 El proyecto se diseñó para que un asistente de código lo genere a partir de un prompt. En [`docs/PROMPT-CLAUDE-CODE.md`](docs/PROMPT-CLAUDE-CODE.md) está el prompt completo, listo para pegar, con la lista de piezas, las reglas (versión fijada, nombres de la API vigente, sin credenciales en el código, modo demo obligatorio, pruebas) y los comandos de verificación.
 
-## 15. Licencia
+## 16. Licencia
 
 MIT. Ver [LICENSE](LICENSE). Los nombres de clientes y artículos de demostración son ficticios (inspirados en la empresa de ejemplo CRONUS de Business Central).

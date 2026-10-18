@@ -33,6 +33,9 @@ from agent_framework import (
     Message,
 )
 
+from . import eventos
+from .observabilidad import ContadorCoste
+
 HERRAMIENTAS_ESCRITURA = ("crear_", "modificar_", "borrar_", "registrar_")
 
 # Herramienta en ejecución. Si durante la llamada el cliente del ERP audita la escritura, lo
@@ -70,6 +73,14 @@ class AuditoriaHerramientas(FunctionMiddleware):
             _HERRAMIENTA_EN_CURSO.reset(token)
             if not marca["auditada_por_el_erp"]:
                 self._registrar_herramienta(context, inicio, argumentos, fallo)
+            # Registro operativo para la oficina (además de la auditoría).
+            eventos.emitir(
+                "herramienta",
+                nombre=context.function.name,
+                argumentos=eventos.resumir_argumentos(argumentos),
+                resultado=_resultado_breve(context.result, fallo),
+                duracion_ms=int((datetime.now(timezone.utc) - inicio).total_seconds() * 1000),
+            )
 
     def _registrar_herramienta(
         self, context: FunctionInvocationContext, inicio: datetime, argumentos: dict[str, Any], fallo: str | None
@@ -131,6 +142,7 @@ class SoloLectura(FunctionMiddleware):
             self.bloqueadas.append(nombre)
             # Al no llamar a call_next() la herramienta no se ejecuta; el modelo recibe esto como resultado.
             context.result = {"error": f"La herramienta '{nombre}' está bloqueada por política: el agente está en modo solo lectura."}
+            eventos.emitir("erp_bloqueada", operacion=nombre, motivo="Modo solo lectura (AGENTE_SOLO_LECTURA=1)")
             return
         await call_next()
 
@@ -150,6 +162,37 @@ class PresupuestoLlamadas(ChatMiddleware):
             )
             return
         await call_next()
+
+
+class EventosModelo(ChatMiddleware):
+    """Emite un evento ``modelo_llamada`` por cada llamada al modelo, con tokens y coste."""
+
+    def __init__(self, contador: ContadorCoste | None = None) -> None:
+        self.tarifa = contador or ContadorCoste()  # solo se usan sus precios
+
+    async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        await call_next()
+        respuesta = context.result
+        uso = getattr(respuesta, "usage_details", None) or {}
+        entrada = int(_leer(uso, "input_token_count") or 0)
+        salida = int(_leer(uso, "output_token_count") or 0)
+        coste = entrada / 1_000_000 * self.tarifa.precio_entrada_por_millon + salida / 1_000_000 * self.tarifa.precio_salida_por_millon
+        modelo = getattr(respuesta, "model", None) or getattr(context.client, "model", None) or type(context.client).__name__
+        eventos.emitir("modelo_llamada", modelo=str(modelo), tokens_entrada=entrada, tokens_salida=salida, coste_eur=round(coste, 6))
+
+
+def _leer(uso: Any, clave: str) -> Any:
+    return uso.get(clave) if isinstance(uso, dict) else getattr(uso, clave, None)
+
+
+def _resultado_breve(resultado: Any, fallo: str | None) -> str:
+    """«ok» o el error (resumido), para el evento ``herramienta``."""
+    if fallo:
+        return eventos.resumir_error(fallo)
+    resumido = _resumir(resultado)
+    if isinstance(resumido, dict) and resumido.get("error"):
+        return eventos.resumir_error(str(resumido["error"]))
+    return "ok"
 
 
 def _resumir(resultado: Any) -> Any:

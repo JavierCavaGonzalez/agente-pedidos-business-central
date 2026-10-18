@@ -38,6 +38,8 @@ from agent_framework import (
 from agent_framework.observability import ChatTelemetryLayer
 from typing_extensions import override
 
+from .formato import euros
+
 PROVEEDORES = ("simulado", "openai", "azure_openai", "foundry")
 
 
@@ -162,6 +164,13 @@ class ClienteSimulado(FunctionInvocationLayer, ChatMiddlewareLayer, ChatTelemetr
         llamadas, resultados = _llamadas_y_resultados(mensajes)
         if self.papel == "redactor":
             return _respuesta_texto(_redactar(texto_usuario), texto_usuario)
+
+        # Preguntas por el estado de la oficina («¿en qué estado está el pedido de…?»): estado_oficina y resumen
+        if self.papel == "asistente" and _PREGUNTA_DE_ESTADO.search(texto_usuario):
+            consultas = [c for c in llamadas if c["name"] == "estado_oficina"]
+            if not consultas:
+                return _respuesta_llamada("estado_oficina", {}, texto_usuario)
+            return _respuesta_texto(_resumir_estado(resultados.get(consultas[-1]["call_id"]), texto_usuario), texto_usuario)
 
         peticion = _analizar_peticion(texto_usuario)
         buscadas_clientes = [c for c in llamadas if c["name"] == "buscar_clientes"]
@@ -377,9 +386,27 @@ def _redactar(resumen: str) -> str:
     return f"Estimado cliente:\n\n{cuerpo}\n\n{resumen.strip()}\n\nUn saludo,\nDepartamento comercial"
 
 
+_PREGUNTA_DE_ESTADO = re.compile(r"(en qu[eé] estado|estado del pedido|qu[eé] pasa con|espera(ndo)? (la )?aprobaci[oó]n)", re.IGNORECASE)
+
+
+def _resumir_estado(estado: Any, pregunta: str) -> str:
+    """Respuesta del asistente simulado a partir de ``estado_oficina``: la aprobación pendiente que encaja con la pregunta."""
+    if not isinstance(estado, dict):
+        return "No he podido consultar el estado de la oficina."
+    pendientes = estado.get("aprobaciones_pendientes") or []
+    elegida = next((a for a in pendientes if any(p.lower() in a.get("cliente", "").lower() for p in re.findall(r"[A-ZÁÉÍÓÚ][\wáéíóú]+", pregunta))), None)
+    elegida = elegida or (pendientes[0] if pendientes else None)
+    if elegida is None:
+        return "No hay ningún pedido esperando aprobación en la oficina."
+    return (
+        f"El pedido de {elegida['cliente']} por {elegida['importe']} está esperando aprobación desde las "
+        f"{elegida['esperando_desde']}: {elegida['motivo']}. Lo decide {elegida['quien_decide']}."
+    )
+
+
 def _resumir_creacion(resultado: Any) -> str:
     if isinstance(resultado, dict) and resultado.get("number"):
-        return f"Pedido {resultado['number']} creado para {resultado.get('customerName', '')} por {resultado.get('totalAmountExcludingTax', 0):.2f} sin impuestos."
+        return f"Pedido {resultado['number']} creado para {resultado.get('customerName', '')} por {euros(resultado.get('totalAmountExcludingTax', 0))} sin impuestos."
     return f"No se ha creado el pedido: {resultado}"
 
 

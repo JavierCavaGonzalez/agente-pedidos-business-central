@@ -1,0 +1,6 @@
+# Oficina de agentes (interfaz web). Instalar además de requirements.txt:
+#   pip install -r requirements-ui.txt      (o: pip install -e ".[ui]")
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+sse-starlette>=2.1,<4
+watchfiles>=0.24,<2

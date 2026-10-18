@@ -20,7 +20,7 @@ from typing import Any
 from agent_framework import Agent
 
 from .bc.base import ClienteBC
-from .herramientas import crear_herramienta_escritura, crear_herramientas_lectura
+from .herramientas import crear_herramienta_escritura, crear_herramienta_estado_oficina, crear_herramientas_lectura
 from .modelo import crear_cliente_modelo
 
 RUTA_PROMPTS = Path(__file__).resolve().parents[2] / "prompts"
@@ -62,7 +62,7 @@ def crear_agente_asistente(bc: ClienteBC, middleware: Sequence[Any] = (), client
         # Instrucciones propias: las del intérprete piden devolver solo el objeto estructurado, y un
         # modelo real que las obedece contesta con un JSON en lugar de confirmar el pedido.
         instructions=leer_prompt("asistente"),
-        tools=[*crear_herramientas_lectura(bc), crear_herramienta_escritura(bc, requiere_aprobacion=True)],
+        tools=[*crear_herramientas_lectura(bc), crear_herramienta_estado_oficina(), crear_herramienta_escritura(bc, requiere_aprobacion=True)],
         middleware=list(middleware),
         default_options={"temperature": 0},
     )

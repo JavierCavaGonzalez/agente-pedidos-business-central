@@ -23,3 +23,16 @@ async def test_crear_pedido_y_errores():
         await bc.crear_pedido_venta("50000", [{"numero_articulo": "1896-S", "cantidad": 1}])
     with pytest.raises(ErrorBC):
         await bc.crear_pedido_venta("40000", [])
+
+
+async def test_con_bc_demo_pedidos_varios_procesos_comparten_el_erp_simulado(tmp_path, monkeypatch):
+    from agente_pedidos.bc import PedidoDuplicado
+
+    monkeypatch.setenv("BC_DEMO_PEDIDOS", str(tmp_path / "pedidos.json"))
+    primero = await ClienteDemo().crear_pedido_venta("10000", [{"numero_articulo": "1928-S", "cantidad": 1}], referencia_externa="A-1")
+    # Otro «proceso» (otra instancia que lee el fichero): el número sigue y el duplicado se detecta.
+    otro = ClienteDemo()
+    segundo = await otro.crear_pedido_venta("10000", [{"numero_articulo": "1928-S", "cantidad": 1}], referencia_externa="A-2")
+    assert int(segundo["number"].removeprefix("S-ORD")) == int(primero["number"].removeprefix("S-ORD")) + 1
+    with pytest.raises(PedidoDuplicado):
+        await ClienteDemo().crear_pedido_venta("10000", [{"numero_articulo": "1928-S", "cantidad": 1}], referencia_externa="A-1")

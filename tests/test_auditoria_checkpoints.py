@@ -172,3 +172,13 @@ async def test_contra_la_api_un_pedido_existente_no_se_vuelve_a_crear():
         await bc.crear_pedido_venta("20000", [{"numero_articulo": "1896-S", "cantidad": 3}], referencia_externa="TRY-5531")
     assert peticiones == [("GET", "customerNumber eq '20000' and externalDocumentNumber eq 'TRY-5531'")]  # ningún POST
     await bc.cerrar()
+
+
+async def test_una_aprobacion_pedida_con_el_erp_simulado_no_se_resuelve_contra_el_real(entorno, capsys, monkeypatch):
+    await cmd_procesar(str(CORREOS / "02_pedido_grande.txt"), "pendiente", "ana")
+    checkpoint = checkpoint_de(capsys.readouterr().out)
+    monkeypatch.setenv("BC_MODO", "api")  # alguien cambia .env al sandbox real
+    assert await cmd_reanudar(checkpoint, "si", "OK", "Javier") == 1
+    assert "se pidió con BC_MODO=demo y ahora está BC_MODO=api" in capsys.readouterr().out
+    monkeypatch.setenv("BC_MODO", "demo")
+    assert await cmd_reanudar(checkpoint, "si", "OK", "Javier") == 0
