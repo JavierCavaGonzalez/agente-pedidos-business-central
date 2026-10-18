@@ -43,6 +43,8 @@ class Config:
     bandeja: Path = RAIZ / "ui" / "bandeja"
     estaticos: Path = RAIZ / "ui" / "static"
     correos_ejemplo: Path = RAIZ / "ejemplos" / "correos"
+    # ERP simulado compartido por los subprocesos (procesar y reanudar ven los mismos pedidos).
+    erp_demo: Path = RAIZ / "ui" / "bandeja" / "erp_demo_pedidos.json"
     python: str = sys.executable
     entorno_extra: dict[str, str] = field(default_factory=dict)
 
@@ -58,6 +60,7 @@ class Config:
             eventos=ruta("AGENTE_EVENTOS", "eventos.jsonl"),
             checkpoints=ruta("AGENTE_CHECKPOINTS", "checkpoints"),
             bandeja=ruta("OFICINA_BANDEJA", "ui/bandeja"),
+            erp_demo=ruta("BC_DEMO_PEDIDOS", "ui/bandeja/erp_demo_pedidos.json"),
         )
 
 
@@ -85,24 +88,28 @@ def crear_app(config: Config | None = None) -> FastAPI:
 
     app = FastAPI(title="Oficina de agentes", version="0.2.0")
 
-    def entorno_hijo(tarea: str | None = None) -> dict[str, str]:
+    def entorno_hijo(tarea: str | None = None, origen: str | None = None) -> dict[str, str]:
         entorno = {**os.environ, **config.entorno_extra}
         entorno["PYTHONPATH"] = os.pathsep.join(filter(None, [str(config.raiz / "src"), os.environ.get("PYTHONPATH")]))
         entorno["PYTHONIOENCODING"] = "utf-8"
         # Rutas absolutas: el hijo escribe exactamente donde lee el backend.
         entorno["AGENTE_EVENTOS"] = str(config.eventos)
         entorno["AGENTE_CHECKPOINTS"] = str(config.checkpoints)
+        entorno["BC_DEMO_PEDIDOS"] = str(config.erp_demo)  # solo lo usa BC_MODO=demo
         entorno.pop("AGENTE_TAREA", None)
+        entorno.pop("AGENTE_ORIGEN", None)
         if tarea:
             entorno["AGENTE_TAREA"] = tarea
+        if origen:
+            entorno["AGENTE_ORIGEN"] = origen
         return entorno
 
-    def lanzar(argumentos: list[str], log: Path, tarea: str | None = None) -> subprocess.Popen:
+    def lanzar(argumentos: list[str], log: Path, tarea: str | None = None, origen: str | None = None) -> subprocess.Popen:
         with log.open("ab") as salida:
             return subprocess.Popen(
                 [config.python, "-m", "agente_pedidos", *argumentos],
                 cwd=config.raiz,
-                env=entorno_hijo(tarea),
+                env=entorno_hijo(tarea, origen),
                 stdin=subprocess.DEVNULL,
                 stdout=salida,
                 stderr=subprocess.STDOUT,
@@ -168,10 +175,10 @@ def crear_app(config: Config | None = None) -> FastAPI:
         if cuerpo.agente in detenidos():
             raise HTTPException(409, "El agente está detenido por el director: actívalo antes de asignarle tareas.")
         tarea = eventos.nueva_tarea_id()
-        nombre = _nombre_seguro(cuerpo.origen) if cuerpo.origen else "correo"
-        fichero = config.bandeja / f"{tarea}_{nombre}.txt"
+        fichero = config.bandeja / f"{tarea}.txt"
         fichero.write_text(cuerpo.correo, encoding="utf-8")
-        lanzar(["procesar", str(fichero), "--aprobar", "pendiente", "--aprobador", "Director"], config.bandeja / f"{tarea}.log", tarea)
+        origen = f"{_nombre_seguro(cuerpo.origen)}.txt" if cuerpo.origen else "correo pegado en la oficina"
+        lanzar(["procesar", str(fichero), "--aprobar", "pendiente", "--aprobador", "Director"], config.bandeja / f"{tarea}.log", tarea, origen)
         return {"tarea": tarea}
 
     @app.get("/api/aprobaciones")

@@ -30,6 +30,7 @@ def oficina(tmp_path, monkeypatch, eventos_temporales):
         checkpoints=tmp_path / "checkpoints",
         bandeja=tmp_path / "bandeja",
         estaticos=RAIZ / "ui" / "static",
+        erp_demo=tmp_path / "erp_demo_pedidos.json",
     )
     with TestClient(crear_app(config)) as cliente:
         cliente.config = config
@@ -131,4 +132,5 @@ def test_de_extremo_a_extremo_asignar_esperar_aprobar_y_pedido_creado(oficina):
     # La aprobación hecha desde la pantalla queda también en la auditoría.
     auditoria = [json.loads(l) for l in (oficina.config.checkpoints.parent / "auditoria.jsonl").read_text(encoding="utf-8").splitlines()]
     assert any(e.get("evento") == "escritura_erp" and e["resultado"]["number"] == tarea_hecha["pedido"] for e in auditoria)
-    assert (oficina.config.bandeja / f"{tarea}_02_pedido_grande.txt").read_text(encoding="utf-8") == correo
+    assert (oficina.config.bandeja / f"{tarea}.txt").read_text(encoding="utf-8") == correo
+    assert next(t for t in oficina.get("/api/estado").json()["tareas"] if t["id"] == tarea)["origen"] == "02_pedido_grande.txt"

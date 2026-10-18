@@ -3,11 +3,17 @@
 Carga ``datos_demo.json`` (clientes y artículos con nombres del típico entorno CRONUS)
 y mantiene los pedidos creados en memoria. Sirve para ejecutar el ejemplo sin tener un
 sandbox de Business Central y para las pruebas automáticas.
+
+Con ``BC_DEMO_PEDIDOS=<fichero.json>`` los pedidos se guardan en ese fichero: así varios
+procesos (``procesar`` y, más tarde, ``reanudar``) ven el mismo ERP simulado, los números de
+pedido no se repiten y la comprobación de duplicados funciona entre procesos. La oficina de
+agentes lo activa; la CLI sola sigue en memoria.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -27,6 +33,17 @@ class ClienteDemo(ClienteBC):
         self.clientes: list[dict[str, Any]] = datos["clientes"]
         self.articulos: list[dict[str, Any]] = datos["articulos"]
         self.pedidos: list[dict[str, Any]] = list(datos.get("pedidos", []))
+        self.ruta_pedidos = Path(os.environ["BC_DEMO_PEDIDOS"]) if os.environ.get("BC_DEMO_PEDIDOS") else None
+        if self.ruta_pedidos and self.ruta_pedidos.exists():
+            self.pedidos = json.loads(self.ruta_pedidos.read_text(encoding="utf-8"))
+
+    def _siguiente(self) -> str:
+        if self.ruta_pedidos is None:
+            numero = ClienteDemo._siguiente_numero
+            ClienteDemo._siguiente_numero += 1
+            return f"S-ORD{numero}"
+        usados = [int(p["number"].removeprefix("S-ORD")) for p in self.pedidos if p["number"].startswith("S-ORD")]
+        return f"S-ORD{max(usados, default=101000) + 1}"
 
     # --- lecturas -----------------------------------------------------------------
     async def buscar_clientes(self, texto: str) -> list[dict[str, Any]]:
@@ -94,8 +111,7 @@ class ClienteDemo(ClienteBC):
                     "amountExcludingTax": round(cantidad * articulo["unitPrice"], 2),
                 }
             )
-        numero = f"S-ORD{ClienteDemo._siguiente_numero}"
-        ClienteDemo._siguiente_numero += 1
+        numero = self._siguiente()
         pedido = {
             "id": f"so-{numero}",
             "number": numero,
@@ -109,6 +125,9 @@ class ClienteDemo(ClienteBC):
             "salesOrderLines": lineas_pedido,
         }
         self.pedidos.append(pedido)
+        if self.ruta_pedidos is not None:
+            self.ruta_pedidos.parent.mkdir(parents=True, exist_ok=True)
+            self.ruta_pedidos.write_text(json.dumps(self.pedidos, ensure_ascii=False, indent=1), encoding="utf-8")
         return pedido
 
     async def cerrar(self) -> None:  # nada que cerrar en memoria

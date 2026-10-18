@@ -198,7 +198,8 @@ async def cmd_procesar(ruta_correo: str, modo_aprobacion: str, aprobador: str) -
     correo = Path(ruta_correo).read_text(encoding="utf-8")
     # La oficina pasa el id de la tarea que ya ha creado; desde la terminal se genera uno.
     eventos.fijar_tarea(os.environ.get("AGENTE_TAREA") or eventos.nueva_tarea_id())
-    eventos.emitir("tarea_iniciada", origen=Path(ruta_correo).name, resumen=eventos.resumir_correo(correo))
+    origen = os.environ.get("AGENTE_ORIGEN") or Path(ruta_correo).name  # la oficina indica el nombre legible
+    eventos.emitir("tarea_iniciada", origen=origen, resumen=eventos.resumir_correo(correo))
     try:
         return await _procesar(correo, ruta_correo, modo_aprobacion, aprobador)
     except Exception as error:
