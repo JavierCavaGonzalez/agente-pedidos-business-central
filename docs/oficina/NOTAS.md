@@ -28,15 +28,40 @@ Principios: (1) estado siempre visible, (2) la persona manda, (3) coste a la vis
 - **SSE.** Al conectar se envía la foto completa. Después se vigila `eventos.jsonl` con `watchfiles` y se reenvía cada línea nueva seguida de la foto actualizada. Cada 3 s sin cambios se reenvía también la foto, para que lleguen solos los cambios que dependen del tiempo (volver a «libre»). Una línea a medio escribir espera a la siguiente vuelta.
 - `app` se crea al pedirla (`ui.backend.app:app`), no al importar el módulo: las pruebas no tocan los ficheros reales.
 
-## Frontend
+## Frontend (torre de control, según `DIRECCION-VISUAL.md`)
 
-- **Escena lógica de 1600×900 escalada** al ancho disponible, hasta 1920 px. Los rótulos, chapas, bocadillos y el tablero escalan con ella. La **tarjeta de aprobación**, la **ficha** y el cuadro de **asignar tarea** van en capas sin escalar, para que su texto se lea a 1280 px. La tarjeta se ancla a la mesa del agente que espera, al lado que tenga sitio, sin tapar nunca su chapa de estado.
-- **Seguridad.** Todo texto que viene de los datos (correos, nombres, mensajes) se inserta con `textContent`, nunca como HTML: el correo es entrada no fiable.
-- **Arte provisional** en SVG: suelo de baldosas isométricas, mesas como bloques, despacho de cristal, sala de reuniones, armarios y plantas. Los personajes son siluetas animadas con CSS: respira, teclea, mano levantada con reloj, exclamación roja; el estado detenido se ve en gris. Si existen `art/oficina.png`, `art/personaje_<estado>.png` o `art/director.png`, se usan sin tocar código (ver `ui/static/art/LICENCIA.md`).
-- **Robustez.** Además del SSE (que reconecta solo), el navegador pide `/api/estado` al arrancar y al reconectar, y si pasan 8 s sin recibir estado. Lo motivó una captura en la que la página quedó vacía mientras arrancaba.
-- **Tipografía.** VT323 de Google Fonts solo en rótulos y tablero; el texto largo, en la fuente del sistema. Sin conexión a internet se usa una monoespaciada del sistema.
-- `…/#ficha=pedidos` abre la ficha del agente al cargar (útil para enlazarla y para capturas).
-- El nombre del director (campo de la cabecera) se recuerda en el navegador (`localStorage`). Es solo una comodidad.
+`DIRECCION-VISUAL.md` sustituye a la sección 4 de la especificación y a `ARTE.md`. `ARTE.md` se ha borrado sin llegar a entrar en el repositorio. El backend, los eventos y las pruebas anteriores no cambian; lo nuevo del backend son añadidos (ver más abajo).
+
+- **3D real con three.js 0.186 y sin compilación.** La skill `isometric-3d-dashboard` recomienda React, Vite y @react-three/fiber. El repositorio no tiene Node y la oficina arranca con un solo comando de Python, así que se respeta ese stack: three.js va como módulo ES local (`ui/static/vendor/`, importmap) en la misma versión que usa javiercava.com. Lo que la skill pide se cumple igual: cámara ortográfica isométrica (30°, como las maquetas de la web), giro y zoom acotados con el ratón y el teclado (flechas, + y −, 0 para volver), clic y paso del ratón sobre los objetos, etiquetas flotantes ancladas (CSS2DRenderer), geometrías simples, `pixelRatio` de 2 como máximo y una sola luz con sombra. Sin WebGL, los paneles funcionan igual y la escena lo dice (5).
+- **Escena.** Planta en corte de diorama, con muros al fondo y ventanales. Contiene el despacho del director (mamparas de vidrio), cuatro mesas (la del Agente de Pedidos y tres vacantes atenuadas), la sala de reuniones y el edificio de **Business Central** fuera de la planta, con un camino de puntos desde la mesa del agente. El agente es un robot cuyos ojos, baliza y aro en el suelo llevan el color de su estado. Teclea cuando trabaja, levanta la mano cuando espera una aprobación y ladea la cabeza cuando hay un error. Al crear un pedido, un punto de oro recorre el camino hasta Business Central y la azotea se enciende. Con «reducir movimiento», las posturas son fijas y solo se enciende la azotea.
+- **Tokens de javiercava.com** (de `src/styles/tokens.css` y `src/figuras/dibujo.css` de ese proyecto), en `ui/static/oficina.css`:
+  - **Paleta**: marino `#081a30` (texto), azul `#1270ae` (lo que se pulsa), azul logotipo `#0a4d7a` (Business Central), oro del logotipo `#fdc308` (lo elegido y el flujo de un pedido), niebla `#f4f6f9` (fondo de la escena), bordes `#dbe3ec` y `#a9b8cb`.
+  - **Arcilla fría de las maquetas** (muro, blanco, vidrio, acero…) para los volúmenes 3D, con luz desde arriba a la izquierda.
+  - **Letras**: DM Sans para la interfaz y Archivo Estrecha para las cifras grandes y los títulos, las dos copiadas de la web con su licencia OFL.
+  - **Radios**: recto en paneles y tarjetas, 4 px en botones y campos, pastilla en chips. La referencia hablaba de «bordes suaves», pero manda la web.
+  - **Sombra** solo en lo que flota: etiquetas, ventanas y avisos.
+  - **Lo elegido** lleva la línea de oro de 3 px debajo y el anillo de oro en el suelo.
+- **Colores de estado.** Ámbar (esperando aprobación) es el oro 500 de la paleta, gris (libre) es el marino 300 y azul (detenido) es el azul 500. La web no tiene verde ni rojo, así que se añaden como acentos con la luminosidad de su azul: verde `#1f8a5b` (trabajando) y rojo `#c8402f` (error).
+- **Composición** (mapa 1:1 con la referencia):
+  - **Barra superior**: logo, buscador, «Simulación» o «Business Central · en vivo · <entorno>», modelo, Inmersivo, Ecosistema y Business Central ↗.
+  - **Seis KPI.**
+  - **Feed** a la izquierda, **escena** en el centro y **detalle** a la derecha.
+  - **Seguimiento de tarea** abajo a la izquierda y **pedidos creados hoy** abajo en el centro.
+  - Por debajo de 920 px de alto, la página se desplaza en lugar de comprimir los paneles. Por debajo de 1280 px de ancho, los paneles se apilan.
+- **Seguimiento de tarea.** Sigue la tarea más urgente (esperando aprobación, después en curso, después la última) o la que elija la persona en el selector, en el feed o en la tabla de pedidos. La **tarjeta de aprobación** vive aquí, junto a las líneas del pedido. El nombre del aprobador va en la propia tarjeta y en el despacho del director, y se recuerda en el navegador. El tiempo del paso actual corre en vivo.
+- **Feed.** Cada 3 s llega la foto con los últimos 80 eventos del día ya descritos por el backend. «Auto» desactivado congela la lista para leerla y cuenta los eventos nuevos.
+- **Buscador.** Filtra el feed, los pedidos y el selector de tareas por texto. Si coincide con un agente, lo selecciona.
+- **Ecosistema** abre un panel «próximamente» (v0.3). **Inmersivo** deja solo la escena; se sale con Esc.
+- **Seguridad.** Todo texto de los datos entra con `textContent`. Los únicos `innerHTML` son los trazos de los iconos, que son constantes del código.
+- `…/#ficha=pedidos` selecciona el agente al cargar y `…/#inmersivo` abre el modo inmersivo.
+
+### Añadidos al backend para estos paneles (sin cambiar lo que ya había)
+
+- **Enlace profundo a Business Central** (`ui/backend/business_central.py`): `https://businesscentral.dynamics.com/<tenant>/<entorno>?company=<empresa>&page=42&filter='No.' IS '<número>'`, con la URL codificada. Solo existe con `BC_MODO=api`; en simulación se indica «simulación». Lleva el tenant, porque es la URL del cliente web de Business Central, pero nunca credenciales. El inicio de sesión lo pide Business Central con los permisos de quien lo abre (2).
+- **La foto (`/api/estado`)** añade claves sin tocar las anteriores: `seguimiento` de cada tarea, `pedidos` del día, `feed`, `erp` (modo, entorno, empresa, enlace, escrituras y bloqueos de hoy, última escritura), `presupuesto_dia_eur` (`OFICINA_PRESUPUESTO_DIA_EUR`, 1 € por defecto) y, por agente, herramientas con llamadas y errores, carga (tareas en curso frente a una capacidad de 3) y pedidos.
+- **Evento `politica`.** Ahora lleva también el cliente, el total y las líneas validadas. Así el seguimiento muestra las líneas también cuando el pedido no necesita aprobación (4).
+- **«Preguntar al agente»** (`POST /api/preguntas`) lanza `chat` como subproceso, igual que las tareas. El comando `chat` deja ahora rastro como tarea de clase «pregunta» y emite un evento nuevo, `respuesta_agente`, con la respuesta resumida y su coste (3, 4). Sin terminal y con `CHAT_APROBAR=no`, si el asistente intenta escribir se le deniega y queda en la auditoría: desde la pantalla, los pedidos solo se crean con la tarjeta de aprobación del workflow (2).
+- **Estado del pedido en BC.** Se muestra como «Abierto», que es como lo deja el agente: no lo lanza ni lo registra. No se consulta a Business Central en cada foto.
 
 ## Arranque
 
@@ -53,6 +78,12 @@ Principios: (1) estado siempre visible, (2) la persona manda, (3) coste a la vis
 
 ## Verificación
 
-- 88 pruebas, todas sin red. Entre ellas: secuencias de eventos de `procesar` y `reanudar`, derivación de estados y tablero, 409 por aprobación resuelta, por doble clic y por cambio de modo, y una **prueba de extremo a extremo** que lanza subprocesos reales con el ERP simulado: asignar el correo 02 → esperar aprobación → aprobar → pedido creado, coste en el tablero, cronología y auditoría.
-- Revisión visual con Edge headless a 1280 y 1600 px. Arreglado tras las capturas: el director levantaba la mano, la tarjeta tapaba la chapa, la chapa tapaba el rótulo, el coste no cuadraba por el redondeo, el origen salía con el nombre del fichero de la bandeja, los números de pedido de la simulación se repetían, la chapa de la ficha se descolocaba y la página podía quedarse vacía al arrancar.
+- 99 pruebas, todas sin red. Entre ellas: enlaces profundos, seguimiento por pasos (pedido grande parado y aprobado, pequeño sin aprobación, denegado y rechazado), pedidos del día con su enlace solo en modo api, feed y herramientas, «Preguntar al agente» con su respuesta y su coste en eventos, secuencias de eventos de `procesar` y `reanudar`, derivación de estados y tablero, 409 por aprobación resuelta, por doble clic y por cambio de modo, y una **prueba de extremo a extremo** que lanza subprocesos reales con el ERP simulado: asignar el correo 02 → esperar aprobación → aprobar → pedido creado, coste en el tablero, cronología y auditoría.
+- **Torre de control, probada desde la interfaz** con Playwright y Edge, con el ERP simulado y el modelo real de `.env`. Se pulsa «Asignar tarea» y se elige `02_pedido_grande.txt`. A los 22 s aparece la tarjeta de aprobación y el agente queda en «Esperando aprobación · 5.875,60 €», con 2 llamadas al modelo y 0,0078 € (captura `captura.png`). Al aprobar como «Javier» se crea S-ORD101001: el punto de oro llega a Business Central, la tabla de pedidos lo muestra como «simulación» y los KPI suben a 1 escritura, 3 llamadas y 0,0091 €. Los seis pasos quedan hechos, con «Aprobado por Javier».
+- Al revisar las capturas se corrigieron:
+  - El lienzo 3D se quedaba en blanco si el contenedor cambiaba de tamaño al llegar los datos. Ahora la fila de KPI tiene su alto reservado y el encuadre se recalcula en cada fotograma si cambia el tamaño.
+  - La tarjeta de aprobación quedaba cortada.
+  - El monitor tapaba la cara del agente.
+  - Las etiquetas se pisaban en escenas estrechas.
+- Revisión visual de la versión anterior (arte provisional) con Edge headless a 1280 y 1600 px. Arreglado tras las capturas: el director levantaba la mano, la tarjeta tapaba la chapa, la chapa tapaba el rótulo, el coste no cuadraba por el redondeo, el origen salía con el nombre del fichero de la bandeja, los números de pedido de la simulación se repetían, la chapa de la ficha se descolocaba y la página podía quedarse vacía al arrancar.
 - **Pendiente:** la verificación con el sandbox real (correo 06 con una referencia externa nueva), después de que Javier vea la oficina con el ERP simulado.

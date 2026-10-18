@@ -53,8 +53,8 @@ Funciona **sin ninguna credencial** en modo demo (modelo simulado + Business Cen
 | **MCP** | `src/agente_pedidos/mcp_server.py` | Servidor MCP opcional con las lecturas del ERP y `MCPStdioTool` para consumirlo desde el agente |
 | **DevUI** | `devui/` | Entidades para la interfaz de pruebas del framework (beta) |
 | **Línea de comandos** | `src/agente_pedidos/cli.py` | `demo`, `procesar`, `pendientes`, `reanudar`, `chat`, `grafo` |
-| **Oficina de agentes** (interfaz web) | `ui/`, `src/agente_pedidos/eventos.py`, `src/agente_pedidos/oficina.py` | Registro de eventos (`eventos.jsonl`), backend FastAPI con SSE y frontend isométrico: estado de cada agente, aprobación desde la pantalla, tablero de coste (sección 11) |
-| **Pruebas** | `tests/` | 88 pruebas sin modelo real ni ERP real (incluida la reanudación desde checkpoint y la oficina de extremo a extremo) |
+| **Oficina de agentes** (interfaz web) | `ui/`, `src/agente_pedidos/eventos.py`, `src/agente_pedidos/oficina.py` | Registro de eventos (`eventos.jsonl`), backend FastAPI con SSE y torre de control con la oficina en 3D isométrico: estado de cada agente, seguimiento y aprobación de tareas, KPI de coste y enlaces a Business Central (sección 11) |
+| **Pruebas** | `tests/` | 99 pruebas sin modelo real ni ERP real (incluida la reanudación desde checkpoint y la oficina de extremo a extremo) |
 
 ## 2. Los escenarios y por qué este
 
@@ -251,7 +251,14 @@ Aparecen dos entidades: el agente `interprete` y el workflow `pedidos`, ambos co
 
 ## 11. Oficina de agentes (interfaz web)
 
-Una interfaz web que representa el sistema como una **oficina isométrica**: el Agente de Pedidos en su mesa, con su estado (libre, trabajando, esperando aprobación, error o detenido), el paso en el que está y desde cuándo; el **director** (la persona) en su despacho, que asigna tareas, aprueba o deniega y puede detener al agente; y un **tablero de control** con agentes activos, tareas en curso, aprobaciones pendientes, escrituras en el ERP, llamadas al modelo y coste del día. Las otras mesas aparecen como **vacantes** (Compras, Finanzas, Almacén): la oficina está preparada para crecer.
+Una **torre de control** con la oficina en 3D isométrico en el centro (three.js, con la paleta y la tipografía de javiercava.com). En la escena están el despacho del **director** (la persona), la mesa del Agente de Pedidos con una etiqueta flotante de estado (libre, trabajando, esperando aprobación, error o detenido), tres mesas **vacantes** (Compras, Finanzas, Almacén), la sala de reuniones y el edificio de **Business Central**, al que viaja un punto de oro cada vez que se crea un pedido. La escena se gira y se acerca con el ratón o el teclado, y al pulsar una mesa se selecciona.
+
+Alrededor, los paneles:
+- **KPI en vivo**: agentes activos, tareas, aprobaciones pendientes, escrituras en el ERP, coste y llamadas al modelo de hoy.
+- **Feed de actividad**, con filtros por BC, tareas, aprobaciones y modelo, y los botones «Asignar tarea» y «Preguntar al agente».
+- **Detalle de lo seleccionado**: carga, coste frente al presupuesto, herramientas, pedidos con su enlace a Business Central, y Detener o Activar.
+- **Seguimiento de tarea**: Recibido → Interpretado → Validado → Aprobación → Creado en BC → Respondido, con los tiempos, las líneas y la **tarjeta de aprobación** cuando toca.
+- **Pedidos creados hoy**.
 
 ![Oficina de agentes: el agente espera la aprobación de un pedido de 5.875,60 € y el tablero muestra la actividad del día](docs/oficina/captura.png)
 
@@ -269,11 +276,13 @@ Cómo funciona:
 - **La interfaz no ejecuta agentes.** «Asignar tarea» lanza `procesar … --aprobar pendiente` y «Aprobar»/«Denegar» lanzan `reanudar` como subprocesos. Aprobar desde la tarjeta es exactamente lo mismo que hacerlo desde la terminal, y queda en la auditoría igual.
 - **Protecciones**: una aprobación ya resuelta, o con un `reanudar` en marcha, se rechaza (409); una aprobación pedida con el ERP simulado no se puede resolver contra el real; un agente detenido no recibe tareas nuevas.
 - Con el ERP simulado, la oficina guarda los pedidos de la simulación en `ui/bandeja/erp_demo_pedidos.json` (`BC_DEMO_PEDIDOS`), para que `procesar` y `reanudar`, que son procesos distintos, vean los mismos pedidos.
+- **Enlaces a Business Central.** Con `BC_MODO=api`, el backend construye el enlace a la ficha de cada pedido (página 42 filtrada por número) a partir de `BC_TENANT_ID`, `BC_ENVIRONMENT` y `BC_COMPANY_NAME`. En simulación no hay enlace. El navegador nunca recibe credenciales.
+- **Preguntar al agente** lanza el comando `chat` sin terminal y con `CHAT_APROBAR=no`: el agente responde consultando, y la respuesta y su coste aparecen en el feed. Los pedidos solo se crean asignando una tarea, con su aprobación.
+- El presupuesto de coste del día se fija con `OFICINA_PRESUPUESTO_DIA_EUR`, que por defecto vale 1 €.
 - Solo escucha en `127.0.0.1`: esta versión no tiene autenticación y el nombre del aprobador es un campo de texto, no una identidad verificada.
+- **Sin compilación ni Node**: three.js 0.186, las fuentes y los iconos van copiados en `ui/static/vendor/`, `ui/static/fuentes/` y `ui/static/img/`. Sin WebGL, los paneles funcionan igual.
 
-**Arte.** El arte actual es provisional y está dibujado en SVG/CSS. Si se guardan en `ui/static/art/` los PNG definitivos (`oficina.png`, `personaje_<estado>.png`, `director.png`), la interfaz los usa sin tocar código. Los nombres, tamaños y prompts sugeridos están en [`ui/static/art/LICENCIA.md`](ui/static/art/LICENCIA.md) y en la [especificación](docs/oficina/ESPECIFICACION.md).
-
-Especificación: [`docs/oficina/ESPECIFICACION.md`](docs/oficina/ESPECIFICACION.md). Decisiones y limitaciones: [`docs/oficina/NOTAS.md`](docs/oficina/NOTAS.md).
+Especificación: [`docs/oficina/ESPECIFICACION.md`](docs/oficina/ESPECIFICACION.md). La dirección visual vigente, que sustituye a la sección 4 de la especificación, está en [`docs/oficina/DIRECCION-VISUAL.md`](docs/oficina/DIRECCION-VISUAL.md). Decisiones y limitaciones: [`docs/oficina/NOTAS.md`](docs/oficina/NOTAS.md).
 
 ## 12. Pruebas
 
@@ -281,7 +290,7 @@ Especificación: [`docs/oficina/ESPECIFICACION.md`](docs/oficina/ESPECIFICACION.
 python -m pytest -q
 ```
 
-88 pruebas, todas sin modelo real ni Business Central real (modelo simulado y `ClienteDemo`): reglas de negocio, cliente de demostración, los cuatro recorridos del workflow (creación automática, aprobación con reanudación desde checkpoint en una instancia nueva, rechazo humano, rechazo por validación), aprobación a nivel de agente (aceptar, rechazar y confirmar en texto tras crear el pedido), aprobación por consola sin terminal o con EOF (se deniega y se audita), middleware de solo lectura y de presupuesto, lectura de `.env` (comentarios al final de línea), filtros del cliente de la API v2.0 contra una API simulada con `httpx.MockTransport` que se comporta como la real (sin `or` entre campos, `contains` sensible a mayúsculas y tildes, `blocked` como `_x0020_`), errores del ERP como datos en las lecturas, auditoría de herramientas que fallan y de las escrituras (desde el workflow y desde `chat`, sin duplicar líneas), ciclo de vida de las aprobaciones guardadas (`pendientes` sin las resueltas, `reanudar` rechaza un checkpoint resuelto), idempotencia de pedidos (mismo cliente y referencia externa), la capa de eventos (secuencias de `procesar` y `reanudar`), la oficina (derivación de estados, tablero, 409 y una prueba de extremo a extremo con subprocesos reales y el ERP simulado) y la integración MCP (se omite si `mcp` no está instalado).
+99 pruebas, todas sin modelo real ni Business Central real (modelo simulado y `ClienteDemo`): reglas de negocio, cliente de demostración, los cuatro recorridos del workflow (creación automática, aprobación con reanudación desde checkpoint en una instancia nueva, rechazo humano, rechazo por validación), aprobación a nivel de agente (aceptar, rechazar y confirmar en texto tras crear el pedido), aprobación por consola sin terminal o con EOF (se deniega y se audita), middleware de solo lectura y de presupuesto, lectura de `.env` (comentarios al final de línea), filtros del cliente de la API v2.0 contra una API simulada con `httpx.MockTransport` que se comporta como la real (sin `or` entre campos, `contains` sensible a mayúsculas y tildes, `blocked` como `_x0020_`), errores del ERP como datos en las lecturas, auditoría de herramientas que fallan y de las escrituras (desde el workflow y desde `chat`, sin duplicar líneas), ciclo de vida de las aprobaciones guardadas (`pendientes` sin las resueltas, `reanudar` rechaza un checkpoint resuelto), idempotencia de pedidos (mismo cliente y referencia externa), la capa de eventos (secuencias de `procesar` y `reanudar`), la oficina (derivación de estados, tablero, seguimiento por pasos, feed, pedidos del día con su enlace a Business Central, «Preguntar al agente», 409 y una prueba de extremo a extremo con subprocesos reales y el ERP simulado) y la integración MCP (se omite si `mcp` no está instalado).
 
 ## 13. Estructura del repositorio y qué hace cada archivo
 
@@ -325,7 +334,7 @@ agente-pedidos-business-central/
 │       └── datos_demo.json       ← clientes y artículos de demostración (estilo CRONUS)
 ├── ui/
 │   ├── backend/                  ← FastAPI: estado derivado de eventos, SSE, tareas, aprobaciones
-│   └── static/                   ← frontend sin compilación (HTML, CSS, módulos ES) y art/
+│   └── static/                   ← frontend sin compilación (HTML, CSS, módulos ES, three.js local)
 └── tests/                        ← pruebas (pytest, sin red)
 ```
 
