@@ -63,6 +63,34 @@ Principios: (1) estado siempre visible, (2) la persona manda, (3) coste a la vis
 - **«Preguntar al agente»** (`POST /api/preguntas`) lanza `chat` como subproceso, igual que las tareas. El comando `chat` deja ahora rastro como tarea de clase «pregunta» y emite un evento nuevo, `respuesta_agente`, con la respuesta resumida y su coste (3, 4). Sin terminal y con `CHAT_APROBAR=no`, si el asistente intenta escribir se le deniega y queda en la auditoría: desde la pantalla, los pedidos solo se crean con la tarjeta de aprobación del workflow (2).
 - **Estado del pedido en BC.** Se muestra como «Abierto», que es como lo deja el agente: no lo lanza ni lo registra. No se consulta a Business Central en cada foto.
 
+### Segunda revisión de la torre de control
+
+- **Escena con más presencia.**
+  - La cámara arranca más cerca y encuadra la oficina y Business Central sin los márgenes de la parcela. Las esquinas del fondo pueden quedar fuera de cuadro.
+  - La mesa del agente activo tiene monitor encendido, teclado, ratón, taza, papeles, lámpara y planta. La pantalla dice el estado: «Procesando pedido» en verde, «Aprobación pendiente» en ámbar, «Error» en rojo y el logotipo en reposo. Es un lienzo de 256 px que solo se redibuja al cambiar el estado.
+  - La mesa se gira para que la cámara vea la pantalla; el agente queda de espaldas. Por eso la baliza, el aro del suelo y la mano levantada son lo que dice el estado, no los ojos.
+  - Las vacantes son solo un contorno punteado (tablero, monitor, silla y huella en el suelo), con un volumen invisible para poder pulsarlas.
+  - El suelo lleva baldosas con textura (un lienzo de 128 px repetido) y cuatro zonas: tarima en el despacho, sala de reuniones, moqueta en el área de trabajo y el pasillo por el que viajan los pedidos a Business Central.
+  - El rendimiento no cambia: no hay geometría pesada, las líneas punteadas son baratas y sigue habiendo una sola luz con sombra.
+- **Cifras en formato español en todas partes.** Un solo formateador, `agente_pedidos/formato.py` («5.875,60 €», redondeo medio hacia arriba), sirve a las políticas («El importe 5.875,60 € supera el umbral de 3.000,00 €»), al resumen para el aprobador, al texto que recibe el redactor, a la CLI, al modelo simulado y a la oficina. Los prompts del redactor y del asistente piden al modelo el mismo formato. Lo que escribe el modelo no se reescribe: si no hace caso, se ve tal cual (4).
+- **Nada cortado.**
+  - Las etiquetas flotantes tienen una primera línea corta (nombre y dato clave) y una segunda que cambia de línea en lugar de recortarse. Cuando el agente espera una aprobación, esa segunda línea dice de quién es el pedido («Pedido de Adatum Corporation») en vez de repetir el importe.
+  - En escenas estrechas la segunda línea se oculta entera.
+  - El panel derecho usa textos más cortos y con sentido («Coste del día», «Última tarea: 16:41, respondida»). Las notas de los KPI y los clientes de la tabla cambian de línea.
+  - El selector de tareas abrevia: «16:41 · 02_pedido_grande · esperando».
+  - La captura comprueba por programa que ningún texto de las etiquetas, los KPI, el panel derecho, la tarjeta o los pasos queda cortado con puntos suspensivos.
+- **Contraste.** El rótulo «Sala de reuniones» va sobre una placa blanca y las vacantes llevan el texto en el gris oscuro de la web (`#33445e`), con borde punteado.
+- **1280 × 800 sin desplazamiento.** Por debajo de 920 px de alto todo se compacta: barra de 52 px, KPI de 74 px, paneles inferiores de 292 px, tarjeta con el importe junto al título y los campos y botones en dos filas. Por debajo de 1500 px de ancho se oculta la columna «Hora» de los pedidos y las líneas pasan a «20 × artículo» con su importe. Comprobado: la página mide 800 px de alto en una ventana de 800 px.
+
+### «Preguntar al agente» con el modelo real
+
+Con el pedido de Adatum esperando aprobación, desde el botón de la oficina: «¿En qué estado está el pedido de Adatum Corporation de 5.875,60 € que espera aprobación?».
+
+- **Respuesta, a los 14,7 s:** «No tengo acceso directo al estado de pedidos ya creados ni en curso. Puedo ayudarte a crear nuevos pedidos o buscar clientes y artículos para ello…».
+- **Coste:** 1 llamada al modelo con 1.001 tokens, **0,0023 €**. El feed lo muestra junto a la respuesta.
+
+La respuesta es honesta pero no ayuda. El asistente de `chat` solo tiene herramientas del ERP (buscar clientes y artículos, crear pedidos). No ve las aprobaciones pendientes del workflow ni consulta pedidos existentes. **Pendiente:** darle una herramienta de solo lectura con las aprobaciones pendientes y los pedidos del día, sacados de los checkpoints y de `eventos.jsonl`, para que pueda contestar «está esperando la aprobación del director desde las 16:39».
+
 ## Arranque
 
 - `python -m agente_pedidos.oficina` (con `PYTHONPATH=src` o el paquete instalado con `pip install -e ".[ui]"`), desde una copia del repositorio. Escucha **solo en 127.0.0.1** y no tiene opción para cambiarlo: esta versión no tiene autenticación.
@@ -79,7 +107,7 @@ Principios: (1) estado siempre visible, (2) la persona manda, (3) coste a la vis
 ## Verificación
 
 - 99 pruebas, todas sin red. Entre ellas: enlaces profundos, seguimiento por pasos (pedido grande parado y aprobado, pequeño sin aprobación, denegado y rechazado), pedidos del día con su enlace solo en modo api, feed y herramientas, «Preguntar al agente» con su respuesta y su coste en eventos, secuencias de eventos de `procesar` y `reanudar`, derivación de estados y tablero, 409 por aprobación resuelta, por doble clic y por cambio de modo, y una **prueba de extremo a extremo** que lanza subprocesos reales con el ERP simulado: asignar el correo 02 → esperar aprobación → aprobar → pedido creado, coste en el tablero, cronología y auditoría.
-- **Torre de control, probada desde la interfaz** con Playwright y Edge, con el ERP simulado y el modelo real de `.env`. Se pulsa «Asignar tarea» y se elige `02_pedido_grande.txt`. A los 22 s aparece la tarjeta de aprobación y el agente queda en «Esperando aprobación · 5.875,60 €», con 2 llamadas al modelo y 0,0078 € (captura `captura.png`). Al aprobar como «Javier» se crea S-ORD101001: el punto de oro llega a Business Central, la tabla de pedidos lo muestra como «simulación» y los KPI suben a 1 escritura, 3 llamadas y 0,0091 €. Los seis pasos quedan hechos, con «Aprobado por Javier».
+- **Torre de control, probada desde la interfaz** con Playwright y Edge, con el ERP simulado y el modelo real de `.env`. Se pulsa «Asignar tarea» y se elige `02_pedido_grande.txt`. A los 22 s aparece la tarjeta de aprobación y el agente queda en «Esperando aprobación · 5.875,60 €», con 2 llamadas al modelo y 0,0078 € (primera captura). La captura vigente, [`captura.png`](captura.png) a 1600 × 1000 y [`captura-1280.png`](captura-1280.png) a 1280 × 800, repite el mismo estado tras la segunda revisión: correo 02 esperando aprobación, con la pregunta al agente en el feed. Esa sesión costó 0,0101 € en 3 llamadas: 0,0078 € del pedido y 0,0023 € de la pregunta. Al aprobar como «Javier» se crea S-ORD101001: el punto de oro llega a Business Central, la tabla de pedidos lo muestra como «simulación» y los KPI suben a 1 escritura, 3 llamadas y 0,0091 €. Los seis pasos quedan hechos, con «Aprobado por Javier».
 - Al revisar las capturas se corrigieron:
   - El lienzo 3D se quedaba en blanco si el contenedor cambiaba de tamaño al llegar los datos. Ahora la fila de KPI tiene su alto reservado y el encuadre se recalcula en cada fotograma si cambia el tamaño.
   - La tarjeta de aprobación quedaba cortada.
