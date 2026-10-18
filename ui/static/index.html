@@ -4,61 +4,138 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Oficina de agentes</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+  <link rel="icon" href="img/logo-icono-60.webp">
+  <link rel="preload" href="fuentes/dm-sans-latin-opsz-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fuentes/archivo-latin-estrecha.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="oficina.css">
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three/three.module.js", "three/addons/": "./vendor/three/addons/" } }
+  </script>
   <script type="module" src="app.js"></script>
 </head>
 <body>
-  <header class="cabecera">
-    <h1 class="pixel">Oficina de agentes</h1>
-    <div class="cabecera-datos">
-      <span class="etiqueta" id="modo-erp" title="Business Central: demo (simulado) o api (sandbox real)">ERP: …</span>
-      <span class="etiqueta" id="modelo" title="Proveedor del modelo de lenguaje">Modelo: …</span>
-      <label class="aprobador">Director:
-        <input id="aprobador" type="text" maxlength="80" autocomplete="off" spellcheck="false">
-      </label>
-      <span class="conexion" id="conexion" data-estado="conectando">Conectando…</span>
+  <a class="saltar" href="#seguimiento">Saltar al seguimiento de tarea</a>
+
+  <header class="barra">
+    <a class="marca" href="./" aria-label="Oficina de agentes, inicio">
+      <img src="img/logo-icono-60.webp" alt="" width="32" height="32">
+      <span>Oficina de agentes</span>
+    </a>
+    <label class="buscador">
+      <svg class="icono" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <span class="sr-only">Buscar</span>
+      <input id="buscar" type="search" placeholder="Buscar tarea, pedido, cliente o agente" autocomplete="off" spellcheck="false">
+    </label>
+    <div class="barra-estado">
+      <span class="conexion-erp" id="conexion-erp" data-modo="demo" title="Business Central">Simulación</span>
+      <span class="pastilla" id="modelo" title="Proveedor del modelo de lenguaje">Modelo …</span>
+      <span class="directo" id="directo" data-estado="conectando" role="status">Conectando…</span>
     </div>
+    <nav class="barra-botones" aria-label="Vistas">
+      <button type="button" class="boton boton--secundario boton--pequeno" id="boton-inmersivo" aria-pressed="false">Inmersivo</button>
+      <button type="button" class="boton boton--secundario boton--pequeno" id="boton-ecosistema">Ecosistema</button>
+      <a class="boton boton--azul boton--pequeno" id="boton-bc" target="_blank" rel="noopener" aria-disabled="true" title="Simulación: no hay un Business Central real que abrir">Business Central ↗</a>
+    </nav>
   </header>
 
-  <main>
-    <div class="marco" id="marco">
-      <!-- Escena escalada (1600×900 lógicos): arte, personajes, rótulos, chapas, bocadillos y tablero. -->
-      <div class="escena" id="escena" aria-label="Oficina: mesas de los agentes, despacho del director y tablero de control"></div>
-      <!-- Capa sin escalar: tarjetas de aprobación (deben leerse bien a cualquier ancho). -->
-      <div class="capa-fija" id="capa-fija"></div>
-    </div>
+  <section class="kpis" aria-label="Indicadores de hoy" id="kpis"></section>
 
-    <section class="registro">
-      <h2 class="pixel">Tareas de hoy</h2>
-      <table class="tabla-tareas">
-        <thead><tr><th>Inicio</th><th>Origen</th><th>Estado</th><th>Pedido</th><th>Coste</th><th>Duración</th><th>Ahora</th></tr></thead>
-        <tbody id="tareas"><tr><td colspan="7" class="vacio">Sin tareas hoy.</td></tr></tbody>
-      </table>
+  <main class="torre" id="torre">
+    <section class="panel feed" aria-labelledby="titulo-feed">
+      <header class="panel-cabecera">
+        <h2 id="titulo-feed">Actividad</h2>
+        <label class="interruptor" title="Seguir los eventos nuevos (si se desactiva, la lista no se mueve)">
+          <input type="checkbox" id="feed-auto" checked> <span>Auto</span>
+        </label>
+      </header>
+      <div class="segmentos" role="group" aria-label="Filtrar actividad" id="feed-filtros">
+        <button type="button" data-filtro="todo" aria-pressed="true">Todo</button>
+        <button type="button" data-filtro="bc" aria-pressed="false">BC</button>
+        <button type="button" data-filtro="tareas" aria-pressed="false">Tareas</button>
+        <button type="button" data-filtro="aprobaciones" aria-pressed="false">Aprobaciones</button>
+        <button type="button" data-filtro="modelo" aria-pressed="false">Modelo</button>
+      </div>
+      <ol class="feed-lista" id="feed-lista" aria-live="polite"></ol>
+      <footer class="feed-acciones">
+        <button type="button" class="boton boton--primario boton--pequeno" id="boton-asignar">Asignar tarea</button>
+        <button type="button" class="boton boton--secundario boton--pequeno" id="boton-preguntar">Preguntar al agente</button>
+      </footer>
+    </section>
+
+    <section class="escena" id="escena" aria-label="Planta de la oficina: despacho del director, mesas de los agentes, sala de reuniones y Business Central">
+      <div class="escena-lienzo" id="escena-lienzo"></div>
+      <div class="escena-ayuda" aria-hidden="true">Arrastra para girar · rueda para acercar · flechas y + − con el teclado · 0 para volver</div>
+      <p class="escena-aviso" id="escena-aviso" role="status">Cargando la oficina…</p>
+      <button type="button" class="boton boton--secundario boton--pequeno salir-inmersivo" id="salir-inmersivo">Salir del modo inmersivo</button>
+    </section>
+
+    <aside class="panel detalle" id="detalle" aria-live="polite" aria-label="Detalle de lo seleccionado"></aside>
+
+    <section class="panel seguimiento" id="seguimiento" aria-labelledby="titulo-seguimiento" tabindex="-1">
+      <header class="panel-cabecera">
+        <h2 id="titulo-seguimiento">Seguimiento de tarea</h2>
+        <label class="selector-tarea"><span class="sr-only">Tarea</span><select id="seguimiento-tarea"></select></label>
+      </header>
+      <div id="seguimiento-cuerpo"></div>
+    </section>
+
+    <section class="panel pedidos" aria-labelledby="titulo-pedidos">
+      <header class="panel-cabecera">
+        <h2 id="titulo-pedidos">Pedidos creados hoy</h2>
+        <span class="pastilla" id="pedidos-total"></span>
+      </header>
+      <div class="tabla-envoltorio">
+        <table class="tabla">
+          <thead><tr><th>Pedido</th><th>Cliente</th><th class="num">Importe</th><th>Estado en BC</th><th>Hora</th><th><span class="sr-only">Enlace</span></th></tr></thead>
+          <tbody id="pedidos-lista"></tbody>
+        </table>
+      </div>
     </section>
   </main>
 
-  <aside class="ficha" id="ficha" hidden aria-live="polite"></aside>
-
-  <dialog class="dialogo" id="dialogo-tarea">
+  <dialog class="ventana" id="dialogo-tarea" aria-labelledby="titulo-asignar">
     <form method="dialog" id="form-tarea">
-      <h2 class="pixel">Asignar tarea</h2>
+      <h2 id="titulo-asignar">Asignar tarea</h2>
       <label>Agente
         <select id="tarea-agente"></select>
       </label>
       <label>Correo de ejemplo
-        <select id="tarea-ejemplo"><option value="">— pegar uno propio —</option></select>
+        <select id="tarea-ejemplo"><option value="">Pegar uno propio</option></select>
       </label>
       <label>Correo del pedido
-        <textarea id="tarea-correo" rows="12" required placeholder="Pega aquí el correo del cliente…"></textarea>
+        <textarea id="tarea-correo" rows="12" required placeholder="Pega aquí el correo del cliente"></textarea>
       </label>
-      <p class="aviso" id="tarea-aviso"></p>
+      <p class="aviso" id="tarea-aviso" role="alert"></p>
       <div class="botones">
-        <button type="button" value="cancelar" id="tarea-cancelar">Cancelar</button>
-        <button type="submit" value="asignar" class="primario" id="tarea-asignar">Asignar</button>
+        <button type="button" class="boton boton--secundario boton--pequeno" id="tarea-cancelar">Cancelar</button>
+        <button type="submit" class="boton boton--primario boton--pequeno" id="tarea-asignar">Asignar</button>
       </div>
+    </form>
+  </dialog>
+
+  <dialog class="ventana" id="dialogo-pregunta" aria-labelledby="titulo-preguntar">
+    <form method="dialog" id="form-pregunta">
+      <h2 id="titulo-preguntar">Preguntar al agente</h2>
+      <p class="nota">El agente responde con lo que consulta en Business Central. Desde aquí no crea pedidos: para eso, asígnale una tarea. La respuesta y su coste aparecen en la actividad.</p>
+      <label>Agente
+        <select id="pregunta-agente"></select>
+      </label>
+      <label>Pregunta
+        <textarea id="pregunta-texto" rows="4" maxlength="2000" required placeholder="¿Cuántas sillas PARIS hay en el almacén?"></textarea>
+      </label>
+      <p class="aviso" id="pregunta-aviso" role="alert"></p>
+      <div class="botones">
+        <button type="button" class="boton boton--secundario boton--pequeno" id="pregunta-cancelar">Cancelar</button>
+        <button type="submit" class="boton boton--primario boton--pequeno" id="pregunta-enviar">Preguntar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="ventana" id="dialogo-ecosistema" aria-labelledby="titulo-ecosistema">
+    <form method="dialog">
+      <h2 id="titulo-ecosistema">Ecosistema</h2>
+      <p>Próximamente. En la v0.3, el mapa de agentes y sistemas: qué agente usa qué herramienta y con qué sistema se conecta.</p>
+      <div class="botones"><button class="boton boton--secundario boton--pequeno" value="cerrar">Cerrar</button></div>
     </form>
   </dialog>
 

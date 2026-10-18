@@ -1,191 +1,348 @@
-// Oficina de agentes: conecta con el backend por SSE y dibuja el estado que llega.
-// Principio: nada sin rastro. Todo lo que se pinta sale de /api/estado (derivado de eventos.jsonl
-// y de los checkpoints); el navegador no inventa estados ni cifras.
+// Oficina de agentes: torre de control. Conecta con el backend por SSE y dibuja el estado que llega.
+// Principio: nada sin rastro. Todo lo que se pinta sale de /api/estado (derivado de eventos.jsonl y de los
+// checkpoints); el navegador no inventa estados ni cifras. Todo texto de los datos entra con textContent.
 
-import { el, api, avisar, euros, coste, numero, hora, hace, duracion, ESTADOS } from "./util.js";
-import { detectarArte, montarEscena, pintarPersonaje } from "./escena.js";
+import { el, api, avisar, euros, coste, numero, hora, hace, duracion, icono, ESTADOS } from "./util.js";
 
-const marco = document.getElementById("marco");
-const escena = document.getElementById("escena");
-const capaFija = document.getElementById("capa-fija");
-const ficha = document.getElementById("ficha");
-const conexion = document.getElementById("conexion");
-const campoAprobador = document.getElementById("aprobador");
+const $ = (id) => document.getElementById(id);
+const RESULTADOS = { creado: "Creado", rechazado: "Rechazado", denegado: "Denegado", error: "Error", respondido: "Respondida" };
+const ESTADO_TAREA = { en_curso: "En curso", esperando_aprobacion: "Esperando aprobación", error: "Error", terminada: "Terminada" };
 
 let config;
-let arte;
-let refs;
+let escena = null;
 let estado = null;
-let fichaAbierta = null; // id del agente cuya ficha está abierta
-const tarjetas = new Map(); // checkpoint_id -> nodo (se conservan para no borrar lo que se está escribiendo)
-const RESULTADOS = { creado: "Creado", rechazado: "Rechazado", denegado: "Denegado", error: "Error" };
+let seleccion = { tipo: "agente", id: "pedidos" };
+let tareaFijada = ""; // "" = la más urgente, automáticamente
+let filtroFeed = "todo";
+let busqueda = "";
+let pedidosVistos = null; // pedidos ya vistos (para animar solo los nuevos)
+let feedVisto = null;
+let firmaDetalle = "";
+let ultimoEstado = 0;
+const tarjetas = new Map(); // checkpoint_id -> tarjeta de aprobación (se conserva para no perder lo escrito)
 
-// --- arranque ---------------------------------------------------------------------------------
+// --- arranque ---------------------------------------------------------------------------------------
 
 async function arrancar() {
-  campoAprobador.value = leerPreferencia("aprobador", "Director");
-  campoAprobador.addEventListener("change", () => guardarPreferencia("aprobador", campoAprobador.value.trim() || "Director"));
+  config = await fetch("oficina.json").then((r) => r.json());
+  try {
+    const { montarEscena } = await import("./escena3d.js");
+    escena = montarEscena($("escena-lienzo"), config, { alElegir: elegir });
+    $("escena-aviso").textContent = "";
 
-  [config, arte] = await Promise.all([fetch("oficina.json").then((r) => r.json()), detectarArte()]);
-  refs = montarEscena(escena, config, arte, { abrirFicha, asignarTarea: abrirDialogoTarea });
-  ajustarEscala();
-  window.addEventListener("resize", ajustarEscala);
-  prepararDialogoTarea();
+  } catch (error) {
+    // Sin WebGL los paneles siguen funcionando: la escena es la vista, no el control
+    $("escena-aviso").textContent = `No se puede dibujar la planta en 3D en este navegador (${error.message}). Los paneles funcionan igual.`;
+  }
+  prepararControles();
   await pedirEstado();
   conectar();
-  setInterval(refrescarTiempos, 1000);
-  // El backend reenvía el estado cada ~3 s; si en 8 s no ha llegado nada, se pide por HTTP.
+  setInterval(() => estado && (pintarEscena(estado), pintarDetalle(estado)), 5000);
+  setInterval(() => document.querySelectorAll(".reloj-paso").forEach((n) => (n.textContent = duracion((Date.now() - new Date(n.dataset.inicio)) / 1000))), 1000);
   setInterval(() => Date.now() - ultimoEstado > 8000 && pedirEstado(), 4000);
-  // Enlace directo a la ficha de un agente: …/#ficha=pedidos
-  const pedida = new URLSearchParams(location.hash.slice(1)).get("ficha");
-  if (pedida && refs.mesas.has(pedida)) abrirFicha(pedida);
+  const pedida = new URLSearchParams(location.hash.slice(1));
+  if (pedida.get("ficha")) elegir({ tipo: "agente", id: pedida.get("ficha") });
+  if (pedida.has("inmersivo")) alternarInmersivo(true);
 }
 
-function ajustarEscala() {
-  const escala = Math.min(marco.clientWidth, 1920) / config.escena.ancho;
-  document.documentElement.style.setProperty("--escala", escala);
-  if (estado) pintarTarjetas(estado);
-}
-
-const escalaActual = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--escala")) || 1;
-
-// --- conexión SSE (EventSource reconecta solo) --------------------------------------------------
-
-let ultimoEstado = 0;
-
-/** Foto completa por HTTP: al arrancar, al (re)conectar y si el SSE lleva un rato callado. */
 async function pedirEstado() {
   try {
     pintar(await api("/api/estado"));
-  } catch {
-    /* el SSE o el siguiente intento lo resolverán */
+  } catch (error) {
+    console.error("No se pudo pintar el estado:", error); // el SSE o el siguiente intento lo resolverán
   }
 }
 
 function conectar() {
   const fuente = new EventSource("/api/eventos");
   fuente.addEventListener("open", () => {
-    marcarConexion("conectado", "En directo");
+    marcarDirecto("conectado", "En directo");
     pedirEstado();
   });
   fuente.addEventListener("estado", (e) => pintar(JSON.parse(e.data)));
-  fuente.addEventListener("evento", (e) => {
-    const evento = JSON.parse(e.data);
-    if (fichaAbierta && evento.agente === fichaAbierta) refrescarFichaPronto();
-  });
   fuente.addEventListener("error", () => {
-    marcarConexion(fuente.readyState === EventSource.CLOSED ? "caido" : "conectando", "Reconectando…");
+    marcarDirecto(fuente.readyState === EventSource.CLOSED ? "caido" : "conectando", "Sin conexión con la oficina, reintentando");
     if (fuente.readyState === EventSource.CLOSED) setTimeout(conectar, 3000);
   });
 }
 
-function marcarConexion(situacion, texto) {
-  conexion.dataset.estado = situacion;
-  conexion.textContent = texto;
+function marcarDirecto(situacion, texto) {
+  $("directo").dataset.estado = situacion;
+  $("directo").textContent = texto;
 }
 
-// --- pintar el estado ---------------------------------------------------------------------------
+// --- pintar ----------------------------------------------------------------------------------------
 
-function pintar(nuevo) {
-  if (estado && nuevo.ahora < estado.ahora) return; // una foto más antigua que la que ya se ve
-  estado = nuevo;
+function pintar(foto) {
+  if (estado && foto.ahora < estado.ahora) return; // una foto más antigua que la que ya se ve
+  estado = foto;
   ultimoEstado = Date.now();
-  const modo = document.getElementById("modo-erp");
-  modo.textContent = `ERP: ${nuevo.modo_erp === "api" ? "sandbox real (api)" : "simulado (demo)"}`;
-  modo.dataset.modo = nuevo.modo_erp;
-  document.getElementById("modelo").textContent = `Modelo: ${nuevo.modelo}`;
-
-  for (const agente of nuevo.agentes) {
-    const r = refs.mesas.get(agente.id);
-    if (!r) continue;
-    pintarPersonaje(r.personaje, agente.estado, arte);
-    r.personaje.title = `${agente.nombre}: ${ESTADOS[agente.estado]}`;
-    r.rotulo.replaceChildren(agente.nombre, el("small", {}, agente.rol));
-    r.chapa.dataset.estado = agente.estado;
-    r.chapa.dataset.desde = agente.desde || "";
-    r.chapa.replaceChildren(textoChapa(agente), el("span", { class: "desde" }, textoDesde(agente.desde)));
-    r.bocadillo.dataset.estado = agente.estado;
-    r.bocadillo.textContent = agente.bocadillo || "";
-    r.contador.hidden = !agente.aprobaciones_pendientes;
-    r.contador.textContent = agente.aprobaciones_pendientes || "";
-  }
-
-  for (const [clave, nodo] of Object.entries(refs.cifras)) {
-    const valor = nuevo.tablero[clave];
-    const texto = clave === "coste_hoy_eur" ? coste(valor) : numero(valor);
-    if (nodo.textContent !== texto) {
-      nodo.textContent = texto;
-      nodo.classList.remove("cambio");
-      void nodo.offsetWidth; // reinicia la animación
-      nodo.classList.add("cambio");
-    }
-    nodo.classList.toggle("ambar", clave === "aprobaciones_pendientes" && valor > 0);
-  }
-
-  pintarTarjetas(nuevo);
-  pintarTareas(nuevo.tareas);
-  if (fichaAbierta) pintarCabeceraFicha();
+  pintarBarra(foto);
+  pintarKpis(foto);
+  pintarEscena(foto);
+  avisarPedidosNuevos(foto);
+  pintarFeed(foto);
+  pintarSeguimiento(foto);
+  pintarPedidos(foto);
+  pintarDetalle(foto);
 }
 
-/** Recién terminada: «Terminado · Creado» (no «Trabajando») durante los 10 s en que se ve el resultado. */
-function textoChapa(agente) {
+const nombreAgente = (id) => estado?.agentes.find((a) => a.id === id)?.nombre || id;
+const aprobador = () => leerPreferencia("aprobador", "Director");
+const coincide = (...textos) => !busqueda || textos.some((t) => String(t ?? "").toLowerCase().includes(busqueda));
+const recortar = (texto, n) => (texto && texto.length > n ? `${texto.slice(0, n - 1)}…` : texto);
+
+function pintarBarra(foto) {
+  const erp = foto.erp || {};
+  const indicador = $("conexion-erp");
+  indicador.dataset.modo = foto.modo_erp;
+  indicador.textContent = foto.modo_erp === "api" ? `Business Central · en vivo · ${erp.entorno || "sandbox"}` : "Simulación";
+  indicador.title = foto.modo_erp === "api" ? `Empresa: ${erp.empresa || "—"}` : "ERP simulado: ningún pedido llega a Business Central";
+  $("modelo").textContent = `Modelo: ${foto.modelo}`;
+  const boton = $("boton-bc");
+  if (erp.enlace) {
+    boton.href = erp.enlace;
+    boton.removeAttribute("aria-disabled");
+    boton.title = `Abrir Business Central (${erp.entorno}${erp.empresa ? ` · ${erp.empresa}` : ""})`;
+  } else {
+    boton.removeAttribute("href");
+    boton.setAttribute("aria-disabled", "true");
+    boton.title = "Simulación: no hay un Business Central real que abrir";
+  }
+}
+
+function pintarKpis(foto) {
+  const t = foto.tablero;
+  const pendiente = foto.aprobaciones.reduce((s, a) => s + (a.importe || 0), 0);
+  const presupuesto = foto.presupuesto_dia_eur || 0;
+  const vacantes = config.mesas.filter((m) => !m.agente).length;
+  const erp = foto.erp || {};
+  const kpis = [
+    ["Agentes activos", numero(t.agentes_activos), `de ${foto.agentes.length} · ${vacantes} mesas vacantes`, "var(--e-trabajando)"],
+    ["Tareas hoy", numero(foto.tareas.length), `${t.tareas_en_curso} en curso`, "var(--azul-500)"],
+    ["Aprobaciones pendientes", numero(t.aprobaciones_pendientes), t.aprobaciones_pendientes ? `${euros(pendiente)} por aprobar` : "ninguna", "var(--e-esperando)", t.aprobaciones_pendientes > 0],
+    ["Escrituras en el ERP hoy", numero(t.escrituras_erp_hoy), `${foto.modo_erp === "api" ? erp.entorno || "sandbox" : "simulación"} · ${erp.bloqueadas_hoy || 0} bloqueadas`, "var(--azul-700)"],
+    ["Coste hoy (€)", coste(t.coste_hoy_eur), presupuesto ? `${numero(Math.round((t.coste_hoy_eur / presupuesto) * 1000) / 10)} % de ${euros(presupuesto)}` : "", "var(--oro-marca)"],
+    ["Llamadas al modelo hoy", numero(t.llamadas_modelo_hoy), foto.modelo, "var(--marino-300)"],
+  ];
+  const caja = $("kpis");
+  if (caja.children.length !== kpis.length) {
+    caja.replaceChildren(...kpis.map(() => el("div", { class: "kpi" }, el("div", { class: "kpi-etiqueta" }), el("div", { class: "kpi-valor" }), el("div", { class: "kpi-nota" }))));
+  }
+  kpis.forEach(([etiqueta, valor, nota, color, alerta], i) => {
+    const [cEtiqueta, cValor, cNota] = caja.children[i].children;
+    if (!cEtiqueta.childElementCount) cEtiqueta.replaceChildren(el("span", { class: "punto", style: `background:${color}` }), etiqueta);
+    if (cValor.textContent !== valor) {
+      cValor.textContent = valor;
+      cValor.classList.remove("cambio");
+      void cValor.offsetWidth; // reinicia la animación
+      cValor.classList.add("cambio");
+    }
+    cNota.textContent = nota;
+    caja.children[i].dataset.alerta = String(Boolean(alerta));
+  });
+}
+
+// --- escena -----------------------------------------------------------------------------------------
+
+function minutos(ts) {
+  if (!ts) return "";
+  const s = Math.max(0, (Date.now() - new Date(ts).getTime()) / 1000);
+  return s < 60 ? "menos de 1 min" : `${Math.floor(s / 60)} min`;
+}
+
+function datoDeAgente(agente, foto) {
   const reciente = agente.resultado_reciente;
-  if (reciente) return `Terminado · ${RESULTADOS[reciente.resultado] || reciente.resultado}`;
-  return ESTADOS[agente.estado] || agente.estado;
-}
-
-function textoDesde(ts) {
-  return ts ? `desde ${hora(ts)} · ${hace(ts)}` : "";
-}
-
-function refrescarTiempos() {
-  for (const r of refs?.mesas.values() || []) {
-    const desde = r.chapa.querySelector(".desde");
-    if (desde) desde.textContent = textoDesde(r.chapa.dataset.desde);
+  if (reciente) return `Terminado · ${RESULTADOS[reciente.resultado] || reciente.resultado}${reciente.pedido ? ` ${reciente.pedido}` : ""}`;
+  if (agente.estado === "trabajando") return `Trabajando · ${minutos(agente.desde)}`;
+  if (agente.estado === "esperando_aprobacion") {
+    const suya = foto.aprobaciones.find((a) => a.agente === agente.id);
+    return `Esperando aprobación${suya ? ` · ${euros(suya.importe)}` : ""}`;
   }
+  if (agente.estado === "error") return `Error · ${hace(agente.desde)}`;
+  if (agente.estado === "detenido") return "Detenido por el director";
+  return `Libre · ${agente.tareas_hoy} ${agente.tareas_hoy === 1 ? "tarea" : "tareas"} hoy`;
 }
 
-// --- tarjetas de aprobación (ancladas a la mesa del agente que espera) -----------------------------
+function pintarEscena(foto) {
+  if (!escena) return;
+  const erp = foto.erp || {};
+  const n = foto.aprobaciones.length;
+  escena.actualizar({
+    agentes: foto.agentes.map((a) => ({
+      id: a.id,
+      estado: a.estado,
+      nombre: a.nombre,
+      dato: datoDeAgente(a, foto),
+      sub: ["trabajando", "esperando_aprobacion", "error"].includes(a.estado) && !a.resultado_reciente ? recortar(a.bocadillo, 52) : null,
+    })),
+    vacantes: config.mesas.filter((m) => !m.agente).map((m) => ({ id: m.id, area: m.vacante })),
+    director: { nombre: aprobador(), dato: n ? `${n} ${n === 1 ? "aprobación pendiente" : "aprobaciones pendientes"}` : "Despacho del director", pendientes: n },
+    bc: {
+      modo: foto.modo_erp,
+      dato: `${foto.modo_erp === "api" ? `${erp.entorno || "sandbox"} · ${erp.empresa || ""}` : "Simulación"} · ${numero(erp.escrituras_hoy || 0)} ${erp.escrituras_hoy === 1 ? "escritura" : "escrituras"} hoy`,
+    },
+  });
+  escena.elegir(seleccion);
+}
 
-function pintarTarjetas(foto) {
+function avisarPedidosNuevos(foto) {
+  const claves = new Set(foto.pedidos.map((p) => `${p.modo}:${p.pedido}`));
+  if (pedidosVistos) {
+    for (const p of foto.pedidos) {
+      if (pedidosVistos.has(`${p.modo}:${p.pedido}`)) continue;
+      escena?.enviarPedido(p.agente);
+      avisar(`Pedido ${p.pedido} creado en ${p.modo === "api" ? "Business Central" : "la simulación"} · ${euros(p.importe)}`, "ok");
+    }
+  }
+  pedidosVistos = claves;
+}
+
+function elegir(nueva) {
+  seleccion = nueva;
+  escena?.elegir(seleccion);
+  firmaDetalle = "";
+  if (estado) pintarDetalle(estado);
+}
+
+// --- feed de actividad ------------------------------------------------------------------------------
+
+const claveFeed = (f) => `${f.ts}|${f.tipo}|${f.tarea}`;
+
+function pintarFeed(foto, forzar = false) {
+  const lista = $("feed-lista");
+  const auto = $("feed-auto").checked;
+  const textoAuto = $("feed-auto").nextElementSibling;
+  if (!auto && !forzar && lista.childElementCount) {
+    // Sin «Auto», la lista no se mueve mientras se lee: solo se cuenta lo nuevo
+    const nuevos = feedVisto ? foto.feed.filter((f) => !feedVisto.has(claveFeed(f))).length : 0;
+    textoAuto.textContent = nuevos ? `Auto (${nuevos} nuevos)` : "Auto";
+    return;
+  }
+  textoAuto.textContent = "Auto";
+  const seguidaId = seguida(foto)?.id;
+  const filas = foto.feed.filter((f) => (filtroFeed === "todo" || f.categoria === filtroFeed) && coincide(f.texto, nombreAgente(f.agente), f.tarea));
+  const firma = `${filtroFeed}|${busqueda}|${filas.length}|${filas[0] ? claveFeed(filas[0]) : ""}|${seguidaId}`;
+  if (lista.dataset.firma === firma && !forzar) return;
+  lista.dataset.firma = firma;
+  lista.replaceChildren(
+    ...(filas.length
+      ? filas.map((f) => {
+          const nuevo = feedVisto && !feedVisto.has(claveFeed(f));
+          return el("li", {
+            class: `feed-item${nuevo ? " nuevo" : ""}`,
+            dataset: { categoria: f.categoria, error: String(f.error), ...(f.tarea ? { tarea: f.tarea } : {}), elegido: String(Boolean(f.tarea) && f.tarea === seguidaId) },
+            onclick: f.tarea ? () => seguirTarea(f.tarea) : null,
+            title: f.tarea ? "Ver esta tarea en el seguimiento" : null,
+          },
+            el("span", { class: "feed-icono" }, icono(f.error ? "error" : f.categoria)),
+            el("span", { class: "feed-meta" }, el("span", {}, hora(f.ts)), el("b", {}, nombreAgente(f.agente)), f.coste_eur != null ? el("span", { class: "pastilla feed-coste" }, coste(f.coste_eur)) : null),
+            el("span", { class: "feed-texto" }, f.texto),
+          );
+        })
+      : [el("li", { class: "vacio" }, busqueda || filtroFeed !== "todo" ? "Nada con este filtro." : "Sin actividad hoy. Asigna una tarea para empezar.")]),
+  );
+  if (auto) lista.scrollTop = 0;
+  feedVisto = new Set(foto.feed.map(claveFeed));
+}
+
+// --- seguimiento de tarea ---------------------------------------------------------------------------
+
+/** La tarea que se sigue: la elegida por la persona o, si no, la más urgente (esperando, en curso, la última). */
+function seguida(foto) {
+  const tareas = foto.tareas;
+  if (tareaFijada) {
+    const fijada = tareas.find((t) => t.id === tareaFijada);
+    if (fijada) return fijada;
+  }
+  return tareas.find((t) => t.estado === "esperando_aprobacion") || tareas.find((t) => t.estado === "en_curso") || tareas[0] || null;
+}
+
+function seguirTarea(id) {
+  tareaFijada = id;
+  if (!estado) return;
+  pintarSeguimiento(estado);
+  pintarFeed(estado, true);
+  pintarPedidos(estado);
+}
+
+function pintarSeguimiento(foto) {
+  const selector = $("seguimiento-tarea");
+  const opciones = [
+    ["", "La más urgente"],
+    ...foto.tareas
+      .filter((t) => coincide(t.origen, t.resumen, t.pedido, t.id, t.seguimiento?.cliente))
+      .map((t) => [t.id, `${hora(t.inicio)} · ${t.origen || t.id} · ${t.estado === "terminada" ? RESULTADOS[t.resultado] || t.resultado : ESTADO_TAREA[t.estado]}`]),
+  ];
+  const firmaOpciones = JSON.stringify(opciones);
+  if (selector.dataset.firma !== firmaOpciones) {
+    selector.dataset.firma = firmaOpciones;
+    selector.replaceChildren(...opciones.map(([valor, texto]) => el("option", { value: valor }, texto)));
+  }
+  selector.value = foto.tareas.some((t) => t.id === tareaFijada) ? tareaFijada : "";
+
+  const cuerpo = $("seguimiento-cuerpo");
+  const tarea = seguida(foto);
+  if (!tarea) {
+    cuerpo.replaceChildren(el("p", { class: "vacio" }, "Sin tareas hoy. Pulsa «Asignar tarea» y elige un correo: aquí verás cada paso hasta el pedido en Business Central."));
+    return;
+  }
+  if (!tarea.seguimiento) {
+    // Una pregunta al agente: no es un pedido, no tiene pasos
+    const respuesta = foto.feed.find((f) => f.tarea === tarea.id && f.tipo === "respuesta_agente");
+    cuerpo.replaceChildren(el("div", { class: "seguimiento-detalle sin-tarjeta" }, el("div", { class: "seguimiento-resumen" },
+      el("div", { class: "cabeza" }, el("strong", {}, "Pregunta al agente"), el("span", {}, tarea.estado === "terminada" ? `Respondida en ${duracion(tarea.duracion_s)}` : "Pensando la respuesta")),
+      el("p", {}, tarea.resumen || ""),
+      respuesta ? el("p", { class: "detalle-bocadillo" }, respuesta.texto) : null,
+      el("div", { class: "pie" }, el("span", {}, `Coste ${coste(tarea.coste_eur)}`), el("span", {}, tarea.id)),
+    )));
+    return;
+  }
+  const s = tarea.seguimiento;
+  const pasos = el("ol", { class: "pasos", "aria-label": "Pasos de la tarea" }, s.pasos.map((p) =>
+    el("li", { class: "paso", dataset: { estado: p.estado, clave: p.clave }, title: p.nota || "" },
+      el("span", { class: "marca-paso" }, p.estado === "hecho" ? icono("hecho") : p.estado === "fallido" ? icono("fallido") : null),
+      el("b", {}, p.etiqueta),
+      el("span", p.estado === "actual" ? { class: "reloj-paso", dataset: { inicio: p.inicio } } : {}, p.estado === "omitido" ? "—" : p.estado === "actual" ? duracion((Date.now() - new Date(p.inicio)) / 1000) : p.duracion_s != null ? duracion(p.duracion_s) : "pendiente"),
+      p.nota ? el("span", { class: "nota-paso" }, p.nota) : null,
+    )));
+  const aprobacion = foto.aprobaciones.find((a) => a.tarea === tarea.id);
+  const lineas = s.lineas || [];
+  const resumen = el("div", { class: "seguimiento-resumen" },
+    el("div", { class: "cabeza" }, el("strong", {}, s.cliente || tarea.origen || "Pedido"), el("span", {}, s.total != null ? euros(s.total) : "")),
+    lineas.length
+      ? el("table", { class: "tabla tabla-lineas" },
+          el("thead", {}, el("tr", {}, el("th", {}, "Artículo"), el("th", { class: "num" }, "Cantidad"), el("th", { class: "num" }, "Importe"))),
+          el("tbody", {}, lineas.map((l) => el("tr", {},
+            el("td", { class: "cliente" }, [l.articulo, l.descripcion].filter(Boolean).join(" · ")),
+            el("td", { class: "num" }, l.cantidad != null ? numero(l.cantidad) : ""),
+            el("td", { class: "num" }, l.importe != null ? euros(l.importe) : ""),
+          ))))
+      : el("p", { class: "vacio" }, tarea.estado === "terminada" ? "Sin líneas validadas." : "Las líneas aparecen cuando el agente valida el pedido."),
+    el("div", { class: "pie" },
+      el("span", {}, `Coste ${coste(tarea.coste_eur)}`),
+      el("span", {}, tarea.estado === "terminada"
+        ? `${RESULTADOS[tarea.resultado] || tarea.resultado}${tarea.pedido ? ` · ${tarea.pedido}` : ""} en ${duracion(tarea.duracion_s)}`
+        : tarea.origen || ""),
+    ),
+  );
+  const detalle = el("div", { class: `seguimiento-detalle${aprobacion ? "" : " sin-tarjeta"}` }, resumen, aprobacion ? tarjetaAprobacion(aprobacion, foto) : null);
+  cuerpo.replaceChildren(pasos, detalle);
   const vigentes = new Set(foto.aprobaciones.map((a) => a.checkpoint_id));
-  for (const [id, nodo] of tarjetas) {
-    if (!vigentes.has(id)) {
-      nodo.remove();
-      tarjetas.delete(id);
-    }
-  }
-  const escala = escalaActual();
-  const porAgente = new Map();
-  for (const aprobacion of foto.aprobaciones) {
-    const r = refs.mesas.get(aprobacion.agente);
-    if (!r) continue;
-    const indice = porAgente.get(aprobacion.agente) || 0;
-    porAgente.set(aprobacion.agente, indice + 1);
-    let tarjeta = tarjetas.get(aprobacion.checkpoint_id);
-    if (!tarjeta) {
-      tarjeta = crearTarjeta(aprobacion);
-      tarjetas.set(aprobacion.checkpoint_id, tarjeta);
-      capaFija.append(tarjeta);
-    }
-    // A la derecha de la mesa si está en la mitad izquierda de la escena; si no, a la izquierda.
-    // Separada lo bastante para no tapar nunca la chapa de estado ni el rótulo del agente.
-    const derecha = r.mesa.x < config.escena.ancho / 2;
-    tarjeta.classList.toggle("a-la-derecha", derecha);
-    tarjeta.classList.toggle("a-la-izquierda", !derecha);
-    const x = (r.mesa.x + (derecha ? 240 : -240)) * escala;
-    tarjeta.style.left = `${derecha ? x : x - 330}px`;
-    tarjeta.style.top = `${Math.max(4, (r.mesa.y - 190) * escala + indice * 36)}px`;
-  }
+  for (const id of tarjetas.keys()) if (!vigentes.has(id)) tarjetas.delete(id);
 }
 
-function crearTarjeta(a) {
+function tarjetaAprobacion(a, foto) {
+  const existente = tarjetas.get(a.checkpoint_id);
+  if (existente) return existente;
+  const campoAprobador = el("input", { type: "text", maxlength: "80", value: aprobador(), "aria-label": "Aprobador", autocomplete: "off", title: "Aprobador: queda en la auditoría tal como se escribe" });
+  campoAprobador.addEventListener("change", () => guardarPreferencia("aprobador", campoAprobador.value.trim() || "Director"));
   const comentario = el("input", { type: "text", maxlength: "500", placeholder: "Comentario (opcional)", "aria-label": "Comentario" });
   const situacion = el("p", { class: "situacion", role: "status" });
-  const detalle = el("pre", { class: "detalle", hidden: true }, a.resumen || "");
   const responder = async (decision) => {
     botones.forEach((b) => (b.disabled = true));
-    situacion.textContent = decision === "si" ? "Aprobando… el agente reanuda la tarea." : "Denegando…";
+    botones[decision === "si" ? 0 : 1].setAttribute("aria-busy", "true");
+    situacion.textContent = decision === "si" ? "Aprobando: el agente reanuda la tarea." : "Denegando.";
     try {
       await api(`/api/aprobaciones/${encodeURIComponent(a.checkpoint_id)}`, {
         method: "POST",
@@ -196,202 +353,297 @@ function crearTarjeta(a) {
       situacion.textContent = error.message;
       botones.forEach((b) => (b.disabled = error.status === 409));
       avisar(`No se pudo registrar la decisión: ${error.message}`, "error");
+    } finally {
+      botones.forEach((b) => b.removeAttribute("aria-busy"));
     }
   };
   const botones = [
-    el("button", { class: "aprobar", type: "button", onclick: () => responder("si") }, "Aprobar"),
-    el("button", { class: "denegar", type: "button", onclick: () => responder("no") }, "Denegar"),
-    el("button", { class: "ver", type: "button", onclick: () => (detalle.hidden = !detalle.hidden) }, "Ver detalle"),
+    el("button", { class: "boton boton--azul boton--pequeno", type: "button", onclick: () => responder("si") }, "Aprobar"),
+    el("button", { class: "boton boton--peligro boton--pequeno", type: "button", onclick: () => responder("no") }, "Denegar"),
   ];
-  // Una aprobación pedida con otro ERP (p. ej. con el simulado) no se resuelve contra este.
-  if (a.modo_erp && estado && a.modo_erp !== estado.modo_erp) {
-    botones[0].disabled = botones[1].disabled = true;
+  // Una aprobación pedida con otro ERP (p. ej. con el simulado) no se resuelve contra este
+  if (a.modo_erp && a.modo_erp !== foto.modo_erp) {
+    botones.forEach((b) => (b.disabled = true));
     situacion.textContent = `Se pidió con el ERP ${a.modo_erp === "api" ? "real (api)" : "simulado (demo)"}: arranca la oficina en ese modo para resolverla.`;
   }
-  return el("article", { class: "tarjeta", "aria-label": `Aprobación pendiente: ${a.cliente}` },
-    el("h3", {}, "APROBACIÓN NECESARIA"),
-    el("div", {}, el("strong", {}, a.cliente), a.referencia ? ` · ref. ${a.referencia}` : ""),
-    el("div", { class: "importe" }, euros(a.importe)),
-    el("ul", {}, a.lineas.map((l) => el("li", {}, `${numero(l.cantidad)} × ${l.articulo} ${l.descripcion} — ${euros(l.importe)}`))),
-    el("p", { class: "motivo" }, a.motivo),
-    comentario,
-    el("div", { class: "botones" }, botones),
+  const tarjeta = el("article", { class: "tarjeta-aprobacion", "aria-label": `Aprobación pendiente: ${a.cliente}` },
+    el("h3", {}, icono("mano"), "Aprobación necesaria"),
+    el("div", { class: "fila" },
+      el("div", { class: "cliente" }, a.cliente, a.referencia ? el("span", { class: "pastilla", style: "margin-left:8px" }, `ref. ${a.referencia}`) : null),
+      el("div", { class: "importe" }, euros(a.importe))),
+    el("p", { class: "motivo" }, a.motivo || ""),
+    el("div", { class: "campos" }, campoAprobador, comentario, ...botones),
     situacion,
-    detalle,
+  );
+  tarjetas.set(a.checkpoint_id, tarjeta);
+  return tarjeta;
+}
+
+// --- pedidos creados hoy ----------------------------------------------------------------------------
+
+function pintarPedidos(foto) {
+  const filas = foto.pedidos.filter((p) => coincide(p.pedido, p.cliente, p.tarea));
+  const total = foto.pedidos.reduce((s, p) => s + (p.importe || 0), 0);
+  $("pedidos-total").textContent = foto.pedidos.length ? `${foto.pedidos.length} · ${euros(total)}` : "ninguno";
+  const seguidaId = seguida(foto)?.id;
+  $("pedidos-lista").replaceChildren(
+    ...(filas.length
+      ? filas.map((p) => el("tr", { dataset: { elegido: String(p.tarea === seguidaId) }, onclick: () => p.tarea && seguirTarea(p.tarea), style: "cursor:pointer", title: "Ver la tarea en el seguimiento" },
+          el("td", {}, el("strong", {}, p.pedido)),
+          el("td", { class: "cliente", title: p.cliente || "" }, p.cliente || "—"),
+          el("td", { class: "num" }, euros(p.importe)),
+          el("td", {}, el("span", { class: "pastilla" }, p.estado_bc)),
+          el("td", {}, hora(p.ts)),
+          el("td", {}, p.enlace
+            ? el("a", { href: p.enlace, target: "_blank", rel: "noopener", onclick: (e) => e.stopPropagation() }, "Abrir en Business Central ↗")
+            : el("span", { class: "simulacion", title: "Pedido de la simulación: no existe en Business Central" }, "simulación")),
+        ))
+      : [el("tr", {}, el("td", { colspan: "6", class: "vacio" }, busqueda ? "Ningún pedido coincide con la búsqueda." : "Todavía no hay pedidos hoy."))]),
   );
 }
 
-// --- tareas de hoy --------------------------------------------------------------------------------
+// --- panel de detalle -------------------------------------------------------------------------------
 
-function pintarTareas(tareas) {
-  const cuerpo = document.getElementById("tareas");
-  if (!tareas.length) {
-    cuerpo.replaceChildren(el("tr", {}, el("td", { colspan: "7", class: "vacio" }, "Sin tareas hoy.")));
-    return;
-  }
-  cuerpo.replaceChildren(...tareas.map((t) => {
-    const situacion = t.estado === "terminada" ? t.resultado : t.estado;
-    const textos = { ...RESULTADOS, esperando_aprobacion: "Esperando aprobación", en_curso: "En curso" };
-    return el("tr", {},
-      el("td", {}, hora(t.inicio)),
-      el("td", {}, t.origen || t.id),
-      el("td", {}, el("span", { class: "resultado", dataset: { r: situacion } }, textos[situacion] || situacion)),
-      el("td", {}, t.pedido || "—"),
-      el("td", { class: "num" }, coste(t.coste_eur)),
-      el("td", { class: "num" }, duracion(t.duracion_s)),
-      el("td", {}, t.bocadillo || ""),
-    );
-  }));
-}
-
-// --- ficha del agente -------------------------------------------------------------------------------
-
-let temporizadorFicha = null;
-
-function refrescarFichaPronto() {
-  clearTimeout(temporizadorFicha);
-  temporizadorFicha = setTimeout(() => fichaAbierta && cargarFicha(fichaAbierta), 300);
-}
-
-async function abrirFicha(agente) {
-  fichaAbierta = agente;
-  ficha.hidden = false;
-  ficha.replaceChildren(el("p", { class: "vacio" }, "Cargando…"));
-  await cargarFicha(agente);
-}
-
-function cerrarFicha() {
-  fichaAbierta = null;
-  ficha.hidden = true;
-}
-
-document.addEventListener("keydown", (e) => e.key === "Escape" && fichaAbierta && cerrarFicha());
-
-async function cargarFicha(agente) {
-  let datos;
-  try {
-    datos = await api(`/api/agentes/${encodeURIComponent(agente)}/cronologia`);
-  } catch (error) {
-    ficha.replaceChildren(el("p", {}, `No se pudo cargar la ficha: ${error.message}`));
-    return;
-  }
-  if (fichaAbierta !== agente) return;
-  const herramientas = Object.entries(datos.herramientas);
-  ficha.replaceChildren(
-    el("button", { class: "cerrar", type: "button", onclick: cerrarFicha, "aria-label": "Cerrar la ficha" }, "×"),
-    el("div", { id: "ficha-cabecera" }),
-    el("h3", {}, "Hoy"),
-    el("div", { class: "cifras" },
-      el("div", { class: "cifra" }, "Coste", el("b", {}, coste(datos.coste_eur))),
-      el("div", { class: "cifra" }, "Llamadas al modelo", el("b", {}, numero(datos.llamadas_modelo))),
-    ),
-    el("h3", {}, "Pedidos creados"),
-    datos.pedidos.length
-      ? el("ul", {}, datos.pedidos.map((p) => el("li", {}, el("span", { class: "hora" }, hora(p.ts)), `Pedido ${p.pedido} · ${euros(p.importe)} · cliente ${p.cliente} · ${p.modo === "api" ? "sandbox real" : "simulado"}`)))
-      : el("p", { class: "vacio" }, "Ninguno hoy."),
-    el("h3", {}, "Herramientas usadas"),
-    herramientas.length
-      ? el("ul", {}, herramientas.map(([nombre, veces]) => el("li", {}, `${nombre} · ${veces} ${veces === 1 ? "vez" : "veces"}`)))
-      : el("p", { class: "vacio" }, "Ninguna hoy."),
-    el("h3", {}, "Cronología"),
-    datos.eventos.length
-      ? el("ul", {}, [...datos.eventos].reverse().map((e) => el("li", { dataset: { tipo: e.tipo } }, el("span", { class: "hora" }, hora(e.ts)), describirEvento(e))))
-      : el("p", { class: "vacio" }, "Sin eventos hoy."),
+function medida(etiqueta, valor, maximo, texto) {
+  const proporcion = maximo > 0 ? valor / maximo : 0;
+  return el("div", { class: "barra-medida", dataset: { nivel: proporcion > 1 ? "excedido" : proporcion >= 0.8 ? "alto" : "normal" } },
+    el("span", {}, etiqueta), el("b", {}, texto),
+    el("div", { class: "pista", role: "meter", "aria-valuemin": "0", "aria-valuemax": String(maximo), "aria-valuenow": String(valor), "aria-label": etiqueta },
+      el("div", { class: "relleno", style: `width:${Math.min(100, proporcion * 100)}%` })),
   );
-  pintarCabeceraFicha();
 }
 
-function describirEvento(e) {
-  if (e.tipo === "modelo_llamada") {
-    const d = e.datos;
-    return `Modelo ${d.modelo}: ${numero(d.tokens_entrada)} tokens de entrada, ${numero(d.tokens_salida)} de salida · ${coste(d.coste_eur)}`;
+function pintarDetalle(foto) {
+  const contenido = detalleDe(foto);
+  const firma = JSON.stringify(contenido.firma);
+  if (firma === firmaDetalle) return;
+  if (firmaDetalle && document.activeElement?.matches("#detalle input")) return; // no se repinta mientras se escribe
+  firmaDetalle = firma;
+  $("detalle").replaceChildren(el("div", { class: "detalle-cuerpo" }, contenido.nodos()));
+}
+
+const vacio = (texto) => el("p", { class: "vacio", style: "padding:0" }, texto);
+
+function detalleDe(foto) {
+  if (seleccion.tipo === "bc") {
+    const erp = foto.erp || {};
+    const real = foto.modo_erp === "api";
+    return {
+      firma: ["bc", erp],
+      nodos: () => [
+        el("div", { class: "detalle-titulo" },
+          el("div", {}, el("h2", {}, "Business Central"), el("p", {}, real ? "Sandbox real, siempre a través del backend" : "ERP simulado con los datos de ejemplo de CRONUS")),
+          el("span", { class: "chip-estado", dataset: { estado: real ? "trabajando" : "libre" } }, el("span", { class: "punto" }), real ? "En vivo" : "Simulación")),
+        el("dl", { class: "ficha-datos" },
+          el("dt", {}, "Entorno"), el("dd", {}, erp.entorno || "—"),
+          el("dt", {}, "Empresa"), el("dd", {}, erp.empresa || "—"),
+          el("dt", {}, "Escrituras hoy"), el("dd", {}, numero(erp.escrituras_hoy || 0)),
+          el("dt", {}, "Escrituras bloqueadas hoy"), el("dd", {}, numero(erp.bloqueadas_hoy || 0)),
+          el("dt", {}, "Última escritura"), el("dd", {}, erp.ultima_escritura ? `${erp.ultima_escritura.pedido} · ${hora(erp.ultima_escritura.ts)}` : "—"),
+        ),
+        el("p", { class: "detalle-bocadillo" }, "El navegador nunca habla con Business Central: el backend usa sus credenciales, y cada escritura pasa por la política y, si hace falta, por tu aprobación."),
+        erp.enlace ? el("div", { class: "detalle-acciones" }, el("a", { class: "boton boton--azul boton--pequeno", href: erp.enlace, target: "_blank", rel: "noopener" }, "Abrir Business Central ↗")) : null,
+      ],
+    };
   }
-  if (e.tipo === "agente_detenido") return "Detenido por el director";
-  if (e.tipo === "agente_activado") return "Activado por el director";
-  return e.descripcion || e.tipo;
-}
-
-function pintarCabeceraFicha() {
-  const cabecera = document.getElementById("ficha-cabecera");
-  const agente = estado?.agentes.find((a) => a.id === fichaAbierta);
-  if (!cabecera || !agente) return;
-  const detenido = agente.estado === "detenido";
-  cabecera.replaceChildren(
-    el("h2", { class: "pixel" }, agente.nombre),
-    el("p", { class: "rol" }, `Rol: ${agente.rol}`),
-    el("span", { class: "chapa", dataset: { estado: agente.estado } }, textoChapa(agente), el("span", { class: "desde" }, textoDesde(agente.desde))),
-    agente.bocadillo ? el("p", {}, agente.bocadillo) : null,
-    el("div", { class: "acciones" },
-      el("button", {
-        class: "boton-pixel", type: "button",
-        title: detenido ? "Vuelve a aceptar tareas" : "No acepta tareas nuevas (las que están en marcha terminan)",
-        onclick: () => cambiarDetencion(agente.id, !detenido),
-      }, detenido ? "Activar" : "Detener"),
-    ),
-  );
+  if (seleccion.tipo === "director") {
+    return {
+      firma: ["director", foto.aprobaciones.map((a) => [a.checkpoint_id, a.importe]), aprobador()],
+      nodos: () => {
+        const campo = el("input", { type: "text", maxlength: "80", value: aprobador(), "aria-label": "Nombre del aprobador", class: "campo" });
+        campo.addEventListener("change", () => {
+          guardarPreferencia("aprobador", campo.value.trim() || "Director");
+          pintarEscena(estado);
+        });
+        return [
+          el("div", { class: "detalle-titulo" }, el("div", {}, el("h2", {}, "Despacho del director"), el("p", {}, "La persona que decide lo que supera la política"))),
+          el("label", { class: "campo-etiquetado" }, el("h3", {}, "Aprobador (queda en la auditoría tal como se escribe)"), campo),
+          el("div", {}, el("h3", {}, "Aprobaciones pendientes"),
+            foto.aprobaciones.length
+              ? el("table", { class: "tabla-mini" }, el("tbody", {}, foto.aprobaciones.map((a) => el("tr", {},
+                  el("td", {}, a.cliente), el("td", { class: "num" }, euros(a.importe)),
+                  el("td", { class: "num" }, el("button", { class: "boton boton--secundario boton--pequeno", type: "button", onclick: () => a.tarea && seguirTarea(a.tarea) }, "Revisar")),
+                ))))
+              : vacio("Ninguna. Cuando un pedido supere la política, su tarjeta aparecerá en el seguimiento de tarea.")),
+        ];
+      },
+    };
+  }
+  if (seleccion.tipo === "vacante") {
+    const mesa = config.mesas.find((m) => m.id === seleccion.id);
+    return {
+      firma: ["vacante", seleccion.id],
+      nodos: () => [
+        el("div", { class: "detalle-titulo" }, el("div", {}, el("h2", {}, `Vacante · ${mesa?.vacante || ""}`), el("p", {}, "Mesa preparada para un próximo agente")), el("span", { class: "chip-estado" }, el("span", { class: "punto" }), "Sin agente")),
+        el("p", { class: "detalle-bocadillo" }, `Próximamente, un agente de ${String(mesa?.vacante || "").toLowerCase()}. Mientras tanto, esta mesa no recibe tareas.`),
+      ],
+    };
+  }
+  const agente = foto.agentes.find((a) => a.id === seleccion.id) || foto.agentes[0];
+  const ultima = foto.tareas.find((t) => t.agente === agente.id);
+  const presupuesto = foto.presupuesto_dia_eur || 0;
+  return {
+    firma: ["agente", agente, ultima?.id, ultima?.estado, presupuesto],
+    nodos: () => {
+      const detenido = agente.estado === "detenido";
+      return [
+        el("div", { class: "detalle-titulo" },
+          el("div", {}, el("h2", {}, agente.nombre), el("p", {}, `Rol: ${agente.rol}`)),
+          el("span", { class: "chip-estado", dataset: { estado: agente.estado } }, el("span", { class: "punto" }),
+            agente.resultado_reciente ? `Terminado · ${RESULTADOS[agente.resultado_reciente.resultado] || ""}` : ESTADOS[agente.estado]),
+        ),
+        agente.bocadillo ? el("p", { class: "detalle-bocadillo" }, agente.bocadillo) : null,
+        medida("Carga", agente.tareas_en_curso, agente.capacidad, `${agente.tareas_en_curso} de ${agente.capacidad} tareas`),
+        medida("Coste hoy frente al presupuesto", agente.coste_hoy_eur, presupuesto, `${coste(agente.coste_hoy_eur)} de ${euros(presupuesto)}`),
+        el("dl", { class: "ficha-datos" },
+          el("dt", {}, "Tareas hoy"), el("dd", {}, numero(agente.tareas_hoy)),
+          el("dt", {}, "Llamadas al modelo"), el("dd", {}, numero(agente.llamadas_modelo_hoy)),
+          el("dt", {}, "Aprobaciones pendientes"), el("dd", {}, numero(agente.aprobaciones_pendientes)),
+          el("dt", {}, "Última ejecución"), el("dd", {}, ultima ? `${hora(ultima.inicio)} · ${ultima.estado === "terminada" ? RESULTADOS[ultima.resultado] || ultima.resultado : ESTADO_TAREA[ultima.estado]}` : "—"),
+        ),
+        el("div", {}, el("h3", {}, "Herramientas"),
+          agente.herramientas.length
+            ? el("table", { class: "tabla-mini" },
+                el("thead", {}, el("tr", {}, el("th", {}, "Nombre"), el("th", { class: "num" }, "Llamadas"), el("th", { class: "num" }, "Errores"))),
+                el("tbody", {}, agente.herramientas.map((h) => el("tr", {}, el("td", {}, h.nombre), el("td", { class: "num" }, numero(h.llamadas)), el("td", { class: `num${h.errores ? " error" : ""}` }, numero(h.errores))))))
+            : vacio("Ninguna usada hoy.")),
+        el("div", {}, el("h3", {}, "Pedidos creados hoy"),
+          agente.pedidos_hoy.length
+            ? el("table", { class: "tabla-mini" }, el("tbody", {}, agente.pedidos_hoy.map((p) => el("tr", {},
+                el("td", {}, el("strong", {}, p.pedido), el("br"), el("span", { class: "apagado" }, p.cliente || "")),
+                el("td", { class: "num" }, euros(p.importe), el("br"), p.enlace ? el("a", { href: p.enlace, target: "_blank", rel: "noopener" }, "Abrir en Business Central ↗") : el("span", { class: "apagado" }, "simulación")),
+              ))))
+            : vacio("Ninguno hoy.")),
+        el("div", { class: "detalle-acciones" },
+          el("button", {
+            class: `boton ${detenido ? "boton--azul" : "boton--peligro"} boton--pequeno`, type: "button",
+            title: detenido ? "Vuelve a aceptar tareas" : "No acepta tareas nuevas (las que están en marcha terminan)",
+            onclick: () => cambiarDetencion(agente.id, !detenido),
+          }, detenido ? "Activar" : "Detener"),
+          el("button", { class: "boton boton--secundario boton--pequeno", type: "button", onclick: () => abrirDialogoTarea(agente.id), disabled: detenido }, "Asignar tarea"),
+        ),
+      ];
+    },
+  };
 }
 
 async function cambiarDetencion(agente, detener) {
   try {
     await api(`/api/agentes/${encodeURIComponent(agente)}/${detener ? "detener" : "activar"}`, { method: "POST" });
     avisar(detener ? "Agente detenido: no recibirá tareas nuevas. Las que estén en marcha terminan." : "Agente activado.", "ok");
+    pedirEstado();
   } catch (error) {
     avisar(error.message, "error");
   }
 }
 
-// --- asignar tarea --------------------------------------------------------------------------------
+// --- controles: buscador, filtros, inmersivo, ecosistema y diálogos ---------------------------------
 
-const dialogo = document.getElementById("dialogo-tarea");
+function prepararControles() {
+  $("buscar").addEventListener("input", (e) => {
+    busqueda = e.target.value.trim().toLowerCase();
+    if (!estado) return;
+    pintarFeed(estado, true);
+    pintarPedidos(estado);
+    pintarSeguimiento(estado);
+    const agente = busqueda && estado.agentes.find((a) => `${a.nombre} ${a.rol}`.toLowerCase().includes(busqueda));
+    if (agente) elegir({ tipo: "agente", id: agente.id });
+  });
+  for (const boton of $("feed-filtros").querySelectorAll("button")) {
+    boton.addEventListener("click", () => {
+      filtroFeed = boton.dataset.filtro;
+      for (const b of $("feed-filtros").querySelectorAll("button")) b.setAttribute("aria-pressed", String(b === boton));
+      if (estado) pintarFeed(estado, true);
+    });
+  }
+  $("feed-auto").addEventListener("change", () => estado && pintarFeed(estado, true));
+  $("seguimiento-tarea").addEventListener("change", (e) => seguirTarea(e.target.value));
+  $("boton-inmersivo").addEventListener("click", () => alternarInmersivo());
+  $("salir-inmersivo").addEventListener("click", () => alternarInmersivo(false));
+  document.addEventListener("keydown", (e) => e.key === "Escape" && document.body.classList.contains("inmersivo") && alternarInmersivo(false));
+  $("boton-ecosistema").addEventListener("click", () => $("dialogo-ecosistema").showModal());
+  $("boton-asignar").addEventListener("click", () => abrirDialogoTarea());
+  $("boton-preguntar").addEventListener("click", abrirDialogoPregunta);
+  prepararDialogoTarea();
+  prepararDialogoPregunta();
+}
+
+function alternarInmersivo(activar = !document.body.classList.contains("inmersivo")) {
+  document.body.classList.toggle("inmersivo", activar);
+  $("boton-inmersivo").setAttribute("aria-pressed", String(activar));
+  requestAnimationFrame(() => escena?.recolocar());
+}
+
+const opcionesAgentes = (elegido) => [
+  ...(estado?.agentes || []).map((a) => el("option", { value: a.id, disabled: a.estado === "detenido", selected: a.id === elegido }, `${a.nombre} (${a.rol})${a.estado === "detenido" ? ", detenido" : ""}`)),
+  ...config.mesas.filter((m) => !m.agente).map((m) => el("option", { disabled: true }, `Vacante: ${m.vacante}`)),
+];
+
 let correos = [];
 
 function prepararDialogoTarea() {
-  const ejemplo = document.getElementById("tarea-ejemplo");
-  const texto = document.getElementById("tarea-correo");
-  ejemplo.addEventListener("change", () => {
-    const elegido = correos.find((c) => c.nombre === ejemplo.value);
-    texto.value = elegido ? elegido.texto : "";
-  });
-  document.getElementById("tarea-cancelar").addEventListener("click", () => dialogo.close());
-  document.getElementById("form-tarea").addEventListener("submit", async (e) => {
+  const ejemplo = $("tarea-ejemplo"), texto = $("tarea-correo");
+  ejemplo.addEventListener("change", () => (texto.value = correos.find((c) => c.nombre === ejemplo.value)?.texto || ""));
+  $("tarea-cancelar").addEventListener("click", () => $("dialogo-tarea").close());
+  $("form-tarea").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const aviso = document.getElementById("tarea-aviso");
-    const boton = document.getElementById("tarea-asignar");
+    const boton = $("tarea-asignar");
     boton.disabled = true;
-    aviso.textContent = "";
+    $("tarea-aviso").textContent = "";
     try {
-      const { tarea } = await api("/api/tareas", {
-        method: "POST",
-        cuerpo: { agente: document.getElementById("tarea-agente").value, correo: texto.value, origen: ejemplo.value || null },
-      });
-      dialogo.close();
+      const { tarea } = await api("/api/tareas", { method: "POST", cuerpo: { agente: $("tarea-agente").value, correo: texto.value, origen: ejemplo.value || null } });
+      $("dialogo-tarea").close();
+      tareaFijada = tarea;
       avisar(`Tarea asignada (${tarea}). El agente empieza en unos segundos.`, "ok");
     } catch (error) {
-      aviso.textContent = error.message;
+      $("tarea-aviso").textContent = error.message;
     } finally {
       boton.disabled = false;
     }
   });
 }
 
-async function abrirDialogoTarea() {
-  const selector = document.getElementById("tarea-agente");
-  const reales = (estado?.agentes || []).map((a) => el("option", { value: a.id, disabled: a.estado === "detenido" }, `${a.nombre} (${a.rol})${a.estado === "detenido" ? " — detenido" : ""}`));
-  const vacantes = config.mesas.filter((m) => !m.agente).map((m) => el("option", { disabled: true }, `Vacante: ${m.vacante || "próximo agente"}`));
-  selector.replaceChildren(...reales, ...vacantes);
+async function abrirDialogoTarea(agente = "pedidos") {
+  $("tarea-agente").replaceChildren(...opcionesAgentes(agente));
   try {
     correos = await api("/api/correos");
   } catch {
     correos = [];
   }
-  const ejemplo = document.getElementById("tarea-ejemplo");
-  ejemplo.replaceChildren(el("option", { value: "" }, "— pegar uno propio —"), ...correos.map((c) => el("option", { value: c.nombre }, c.nombre)));
-  document.getElementById("tarea-correo").value = "";
-  document.getElementById("tarea-aviso").textContent = "";
-  dialogo.showModal();
+  $("tarea-ejemplo").replaceChildren(el("option", { value: "" }, "Pegar uno propio"), ...correos.map((c) => el("option", { value: c.nombre }, c.nombre)));
+  $("tarea-correo").value = "";
+  $("tarea-aviso").textContent = "";
+  $("dialogo-tarea").showModal();
 }
 
-// --- preferencias del navegador (solo comodidad: el nombre del director) ----------------------------
+function prepararDialogoPregunta() {
+  $("pregunta-cancelar").addEventListener("click", () => $("dialogo-pregunta").close());
+  $("form-pregunta").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const boton = $("pregunta-enviar");
+    boton.disabled = true;
+    $("pregunta-aviso").textContent = "";
+    try {
+      const { tarea } = await api("/api/preguntas", { method: "POST", cuerpo: { agente: $("pregunta-agente").value, mensaje: $("pregunta-texto").value } });
+      $("dialogo-pregunta").close();
+      tareaFijada = tarea;
+      avisar("Pregunta enviada: la respuesta aparecerá en la actividad con su coste.", "ok");
+    } catch (error) {
+      $("pregunta-aviso").textContent = error.message;
+    } finally {
+      boton.disabled = false;
+    }
+  });
+}
+
+function abrirDialogoPregunta() {
+  $("pregunta-agente").replaceChildren(...opcionesAgentes(seleccion.tipo === "agente" ? seleccion.id : "pedidos"));
+  $("pregunta-texto").value = "";
+  $("pregunta-aviso").textContent = "";
+  $("dialogo-pregunta").showModal();
+}
+
+// --- preferencias del navegador (solo comodidad: el nombre del aprobador) ---------------------------
 
 function leerPreferencia(clave, defecto) {
   try {
@@ -410,6 +662,6 @@ function guardarPreferencia(clave, valor) {
 }
 
 arrancar().catch((error) => {
-  marcarConexion("caido", "Error al arrancar");
+  marcarDirecto("caido", "Error al arrancar");
   avisar(`No se pudo arrancar la oficina: ${error.message}`, "error", 20000);
 });

@@ -19,14 +19,6 @@ export function el(etiqueta, atributos = {}, ...hijos) {
 
 const NS = "http://www.w3.org/2000/svg";
 
-/** Igual que el(), para SVG. */
-export function svg(etiqueta, atributos = {}, ...hijos) {
-  const nodo = document.createElementNS(NS, etiqueta);
-  for (const [clave, valor] of Object.entries(atributos)) nodo.setAttribute(clave, valor);
-  for (const hijo of hijos.flat()) if (hijo) nodo.append(hijo);
-  return nodo;
-}
-
 // useGrouping "always": 5.875,60 € (por defecto, es-ES no agrupa las cifras de cuatro dígitos).
 const FORMATO_EUROS = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", useGrouping: "always" });
 const FORMATO_COSTE = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", minimumFractionDigits: 4, maximumFractionDigits: 4, useGrouping: "always" });
@@ -87,14 +79,26 @@ export async function api(ruta, opciones = {}) {
   return datos;
 }
 
-/** ¿Existe la imagen? (para usar el arte definitivo si está y el provisional si no). */
-export function existeImagen(url) {
-  return new Promise((resolver) => {
-    const imagen = new Image();
-    imagen.onload = () => resolver(true);
-    imagen.onerror = () => resolver(false);
-    imagen.src = url;
-  });
+// Iconos de trazo (24 × 24), dibujados para la oficina al estilo de Lucide
+const ICONOS = {
+  bc: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
+  tareas: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 3h6v3H9z"/><path d="M9 12h6M9 16h4"/>',
+  aprobaciones: '<path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"/><path d="m9 12 2 2 4-4"/>',
+  modelo: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/>',
+  error: '<circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.5"/>',
+  hecho: '<path d="m5 12 5 5 9-10"/>',
+  fallido: '<path d="M7 7l10 10M17 7 7 17"/>',
+  mano: '<path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V11M11 10V4.5a1.5 1.5 0 0 1 3 0V11M14 10.5V6a1.5 1.5 0 0 1 3 0v8a7 7 0 0 1-7 7h-.5a6 6 0 0 1-4.6-2.2L3 15.5a1.6 1.6 0 0 1 2.4-2.1L8 16"/>',
+};
+
+/** Un icono de trazo como nodo SVG (los trazos son constantes del código, nunca datos). */
+export function icono(nombre) {
+  const nodo = document.createElementNS(NS, "svg");
+  nodo.setAttribute("viewBox", "0 0 24 24");
+  nodo.setAttribute("class", "icono");
+  nodo.setAttribute("aria-hidden", "true");
+  nodo.innerHTML = ICONOS[nombre] || ICONOS.tareas;
+  return nodo;
 }
 
 export function avisar(texto, tipo = "info", ms = 6000) {
