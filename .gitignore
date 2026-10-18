@@ -26,3 +26,6 @@ venv/
 .idea/
 *.swp
 .DS_Store
+
+# Borrador del artículo: se trabaja aquí pero no se publica en el repositorio
+docs/articulo.md
