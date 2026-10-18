@@ -8,7 +8,7 @@ El objetivo no es el pedido: es enseñar **todas las piezas del esqueleto de un 
 |---|---|---|
 | Qué cliente y qué artículos nombra el correo; cómo redactar la respuesta | Si el pedido es válido (cliente no bloqueado, artículos existentes, existencias, crédito), su importe, si hace falta aprobación y qué ruta sigue; la escritura en el ERP | Si se crea un pedido que exige aprobación (importe, dudas, política) |
 
-Funciona **sin ninguna credencial** en modo demo (modelo simulado + Business Central simulado) y se conecta a un **sandbox real** de Business Central con seis variables de entorno. Se ha probado con Azure OpenAI y contra un sandbox con CRONUS ES; lo que falló por el camino y cómo se corrigió está en [`docs/notas-de-construccion.md`](docs/notas-de-construccion.md).
+Funciona **sin ninguna credencial** en modo demo (modelo simulado + Business Central simulado) y se conecta a un **sandbox real** de Business Central con seis variables de entorno. Se ha probado con Azure OpenAI y contra un sandbox con CRONUS ES; lo que falló por el camino y cómo lo corregí está en [`docs/notas-de-construccion.md`](docs/notas-de-construccion.md), y la investigación previa al artículo (fuentes, comparativa con Copilot Studio y Foundry, verificación contra el sandbox) en [`docs/informe-investigacion.md`](docs/informe-investigacion.md).
 
 > Lenguaje: Python. Framework: `agent-framework==1.22.0`. Todo el código usa la API vigente (`Agent`, `AgentSession`, `@tool`, `WorkflowBuilder`, `request_info`, `FileCheckpointStorage`, `configure_otel_providers`), no la de la beta de 2025 (`ChatAgent`, `AgentThread`, `@ai_function`…). Si usas un asistente de código, fíjale la versión: la API cambia cada semana.
 
@@ -115,6 +115,8 @@ python -m agente_pedidos demo
 
 Verás los cuatro correos de `ejemplos/correos/` procesados: uno se crea automáticamente (559 €), uno se detiene para aprobación (5.875,60 €, aprobado automáticamente por el comando `demo`), uno se rechaza porque el cliente está bloqueado y otro se rechaza porque un artículo es ambiguo. Al final de cada uno: el resultado, la respuesta propuesta al cliente, el coste estimado y la ruta del fichero de auditoría.
 
+`pip install -r requirements.txt` tarda **unos 10 minutos** la primera vez: Agent Framework arrastra unos 200 paquetes.
+
 Alternativa sin `PYTHONPATH`: `pip install -e .` y después `agente-pedidos demo`.
 
 ## 6. Los comandos, uno a uno
@@ -154,7 +156,7 @@ Edita `.env`:
 # OpenAI
 MODELO_PROVEEDOR=openai
 OPENAI_API_KEY=sk-...
-OPENAI_CHAT_MODEL=gpt-5-mini
+OPENAI_CHAT_MODEL=gpt-4.1-mini
 
 # o Azure OpenAI (con clave; si AZURE_OPENAI_API_KEY queda vacía se usa DefaultAzureCredential)
 MODELO_PROVEEDOR=azure_openai
@@ -168,6 +170,8 @@ FOUNDRY_PROJECT_ENDPOINT=https://<proyecto>.services.ai.azure.com/api/projects/<
 FOUNDRY_MODEL=<nombre-del-despliegue>
 ```
 
+Usa un modelo que admita `temperature` (como `gpt-4.1-mini`, con el que lo probé): el código la fija en los agentes (0 para el intérprete y el asistente, 0,3 para el redactor) y los modelos razonadores, como la serie `gpt-5`, no la admiten.
+
 El resto del código no cambia: `modelo.py` devuelve un cliente distinto y el agente, las herramientas, el middleware y el workflow son idénticos. Con un modelo real, las instrucciones de `prompts/` son las que mandan; conviene probar primero con `AGENTE_SOLO_LECTURA=1` y `BC_MODO=demo`.
 
 ## 8. Conectar un sandbox de Business Central
@@ -180,7 +184,7 @@ Pasos (documentación oficial: [Using Service-to-Service Authentication](https:/
 2. **Registra una aplicación en Microsoft Entra ID** (portal de Azure → Microsoft Entra ID → Registros de aplicaciones → Nuevo registro). Apunta el *ID de aplicación (cliente)* y el *ID de directorio (inquilino)*.
 3. En esa aplicación, **Permisos de API → Agregar → Dynamics 365 Business Central → Permisos de aplicación → `API.ReadWrite.All`** y concede el consentimiento de administrador.
 4. **Certificados y secretos → Nuevo secreto de cliente**. Copia el valor (solo se muestra una vez).
-5. En Business Central, abre la página **Aplicaciones de Microsoft Entra** (busca «Microsoft Entra applications»), crea una entrada con el *ID de cliente*, ponla en estado **Habilitado**, pulsa **Conceder consentimiento** y asígnale **conjuntos de permisos mínimos** (por ejemplo `D365 BASIC`, lectura de clientes y artículos y creación de pedidos de venta). **Nunca SUPER.** Esta cuenta de aplicación no consume licencia de usuario.
+5. En Business Central, abre la página **Aplicaciones de Microsoft Entra** (busca «Microsoft Entra applications»), crea una entrada con el *ID de cliente*, ponla en estado **Habilitado**, pulsa **Conceder consentimiento** y asígnale **conjuntos de permisos mínimos**. Con estos funciona todo el ejemplo (leer clientes y artículos y crear pedidos de venta): `D365 BASIC`, `D365 READ` y `D365 SALES DOC, EDIT`. **Nunca SUPER.** Esta cuenta de aplicación no consume licencia de usuario.
 6. Rellena `.env`:
 
 ```ini
@@ -191,6 +195,8 @@ BC_CLIENT_ID=<ID de aplicación>
 BC_CLIENT_SECRET=<secreto>
 BC_COMPANY_NAME=<nombre exacto de la empresa, p. ej. CRONUS ES>
 ```
+
+Hice las pruebas con el sandbox (pedidos 101021 a 101024) con esos tres conjuntos de permisos y con **Azure OpenAI en Sweden Central** (despliegue `gpt-4.1-mini`).
 
 7. Prueba primero en solo lectura y con el modelo simulado: `AGENTE_SOLO_LECTURA=1 python -m agente_pedidos chat "Empresa: <un cliente de tu sandbox>. Necesito 2 <un artículo>"`. Después, `procesar` con un correo propio.
 8. Si tu sandbox tiene los datos de demostración de **CRONUS ES**, hay dos correos preparados con nombres de clientes y artículos tal como están allí (sin códigos, para que el modelo tenga que buscarlos):
@@ -317,6 +323,8 @@ agente-pedidos-business-central/
 │   ├── arquitectura.md           ← diagramas (esqueleto, recorrido, workflow)
 │   ├── PROMPT-ASISTENTE.md       ← prompt para reconstruir el proyecto con un asistente de programación
 │   ├── notas-de-construccion.md  ← fallos que encontré al probarlo con un modelo real y cómo los corregí
+│   ├── informe-investigacion.md  ← investigación previa al artículo, con las fuentes citadas ([AF-13], [BC-58]…)
+│   ├── img/auditoria.png         ← dos líneas reales de auditoria.jsonl (pedido creado y duplicado rechazado)
 │   └── oficina/                  ← especificación, notas y captura de la oficina de agentes
 ├── src/agente_pedidos/
 │   ├── __main__.py               ← permite `python -m agente_pedidos`
@@ -363,7 +371,7 @@ Detalle de cada pieza:
 - **Aprobación**: la pide por consola (sin terminal, se deniega) o la deja en un checkpoint. Llevarla a Teams, Outlook o una página de Business Central es trabajo de la aplicación (el workflow ya expone la petición y la reanudación).
 - **Identidad y gobierno del tenant**: el framework no da Entra Agent ID ni registro en Agent 365 por sí mismo; eso llega al desplegarlo como hosted agent en Microsoft Foundry o con el SDK de Agent 365.
 - **Versiones**: fijado a `agent-framework==1.22.0`. Las versiones posteriores pueden cambiar nombres (ha ocurrido tras la 1.0); revisa `CHANGELOG.md` del repositorio oficial antes de actualizar.
-- **Lo aprendido al probarlo de verdad**: [`docs/notas-de-construccion.md`](docs/notas-de-construccion.md) recoge cada fallo encontrado al pasar del modo demo a un modelo real y a un sandbox de Business Central (lectura de `.env`, prompts, el 501 por `or` entre campos, las rarezas de la API, la auditoría de las escrituras, los checkpoints ya resueltos, la idempotencia), con su causa, la corrección, las pruebas y lo que costó cada ejecución.
+- **Lo aprendido al probarlo de verdad**: [`docs/notas-de-construccion.md`](docs/notas-de-construccion.md) recoge cada fallo encontrado al pasar del modo demo a un modelo real y a un sandbox de Business Central (lectura de `.env`, prompts, el 501 por `or` entre campos, las rarezas de la API, la auditoría de las escrituras, los checkpoints ya resueltos, la idempotencia), con su causa, la corrección, las pruebas y lo que costó cada ejecución. La investigación en que se apoya el artículo, con todas sus fuentes, está en [`docs/informe-investigacion.md`](docs/informe-investigacion.md).
 - **Siguientes pasos razonables**: desplegar como hosted agent en Foundry (`azd`), exportar trazas a Application Insights, añadir una suite de evaluación con correos reales anonimizados (desarrollo guiado por evaluación, cap. 10 del libro) y sustituir la entrada por fichero por un buzón real (Microsoft Graph).
 
 ## 15. Para construirlo con un asistente de programación
