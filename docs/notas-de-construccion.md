@@ -60,7 +60,16 @@ ValueError: invalid literal for int() with base 10: '12    # tope de llamadas al
 
 **Causa probable: el prompt nuevo.** `prompts/asistente.md` dice «Es mejor preguntar que suponer» y «si no está claro, pregunta», pero no aclara que la aprobación de `crear_pedido_venta` ya es la confirmación de la persona. El modelo añadió su propia confirmación conversacional antes de la herramienta. Con el prompt anterior (el del intérprete) sí llamaba a la herramienta, pero luego contestaba en JSON.
 
-**Pendiente.** Ajustar `prompts/asistente.md` para que, con cliente, artículos y cantidades claros, llame a `crear_pedido_venta` sin pedir confirmación en el chat (la aprobación de la herramienta es esa confirmación), y repetir la verificación. La prueba con el modelo simulado no puede detectar esto: el simulado no decide si pregunta o no.
+**Ajuste del prompt.** En `prompts/asistente.md`, el paso 4 dice ahora que, con cliente, artículos y cantidades claros, llame directamente a `crear_pedido_venta` **sin pedir confirmación en el chat**, porque la herramienta se detiene a pedir la aprobación de una persona y esa aprobación ya es la confirmación. La regla «es mejor preguntar que suponer» queda limitada a cuando falta un dato o hay ambigüedad. La prueba con el modelo simulado no puede cubrir esto (el simulado no decide si pregunta o no); se verifica con el modelo real.
+
+**Segunda verificación con el modelo real (2026-10-18): superada.** Mismo comando, `gpt-4.1-mini`:
+
+- Se para a pedir aprobación: «EL AGENTE QUIERE EJECUTAR UNA HERRAMIENTA PROTEGIDA», `crear_pedido_venta` con cliente 10000 y 5 × 1928-S; `CHAT_APROBAR=si` la aprueba.
+- Crea el pedido: S-ORD101001 (en la auditoría: `buscar_clientes`, `buscar_articulos`, `crear_pedido_venta`).
+- Responde en texto, no en JSON: «He creado el pedido S-ORD101001 para Adatum Corporation con 5 lámparas AMSTERDAM, por un total sin impuestos de 279.5. Está en estado borrador pendiente de aprobación. ¿Quieres que te ayude con algo más?». Incluye número, cliente, líneas y total.
+- 3 llamadas al modelo (817/53, 941/38 y 1.043/54), 2.801 / 145 tokens, coste estimado 0,0068 €.
+
+**Observación menor (sin corregir).** «Pendiente de aprobación» no es exacto: el pedido ya se ha aprobado; `status: Draft` significa en Business Central que el pedido está abierto y sin lanzar. El modelo interpreta el estado por su cuenta. Si molesta, se puede añadir al prompt que no comente el estado o que explique «borrador = abierto, sin lanzar».
 
 ## 2026-10-18 · Aprobación por consola sin terminal
 
@@ -91,7 +100,8 @@ Azure OpenAI, despliegue `gpt-4.1-mini`, `BC_MODO=demo` (ERP simulado: no se esc
 | 5 | `chat …` (`CHAT_APROBAR=si`, `ENABLE_SENSITIVE_DATA=1`, diagnóstico) | Igual que la 4 | 3 | 2.875 / 177 | 0,0072 € |
 | 6 | `procesar 02_pedido_grande.txt --aprobar si` (tras las correcciones) | Igual que la 2 | 3 (2 + 1) | 3.141 / 337 | 0,0090 € |
 | 7 | `chat …` (`CHAT_APROBAR=si`, con `prompts/asistente.md`) | Responde en texto, pero pide confirmación en el chat y no llama a `crear_pedido_venta`; sin pedido | 3 | 2.412 / 75 | 0,0054 € |
-| | **Total del día** | | **17** | **16.247 / 1.182** | **≈ 0,0420 €** |
+| 8 | `chat …` (`CHAT_APROBAR=si`, prompt del asistente ajustado) | Pide aprobación, crea S-ORD101001 y responde en texto con número, cliente, líneas y total | 3 | 2.801 / 145 | 0,0068 € |
+| | **Total del día** | | **20** | **19.048 / 1.327** | **≈ 0,0487 €** |
 
 Observaciones:
 
