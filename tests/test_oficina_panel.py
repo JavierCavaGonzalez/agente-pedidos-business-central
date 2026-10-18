@@ -127,3 +127,27 @@ async def test_preguntar_al_agente_deja_la_respuesta_y_su_coste_en_eventos(entor
     tarea = unica_tarea(eventos_temporales)
     assert estado.seguimiento(tarea, AHORA) is None
     assert any(f["texto"].startswith("Respuesta: ") for f in estado.feed(lista))
+
+
+async def test_estado_oficina_da_al_asistente_la_aprobacion_pendiente_con_importe_y_motivo(entorno, eventos_temporales, monkeypatch, capsys):
+    from agente_pedidos.estado_oficina import estado_oficina
+
+    await cmd_procesar(str(CORREOS / "02_pedido_grande.txt"), "pendiente", "ana")
+    estado_hoy = await estado_oficina()
+    [pendiente] = estado_hoy["aprobaciones_pendientes"]
+    assert pendiente["cliente"] == "10000 Adatum Corporation" and pendiente["importe"] == "5.875,60 €"
+    assert pendiente["motivo"] == "El importe 5.875,60 € supera el umbral de 3.000,00 €" and pendiente["erp"] == "simulado"
+    [tarea] = estado_hoy["tareas_de_hoy"]
+    assert tarea["estado"] == "esperando aprobación" and tarea["paso_actual"] == "Esperando la decisión del director"
+    assert estado_hoy["pedidos_creados_hoy"] == []
+
+    # La pregunta por chat usa la herramienta (solo lectura) y contesta con estado, importe y motivo; no cuenta como tarea
+    monkeypatch.setenv("CHAT_APROBAR", "no")
+    eventos.fijar_tarea(None)
+    await cmd_chat("¿En qué estado está el pedido de Adatum Corporation que espera aprobación?", "Director")
+    lista = eventos.leer_eventos(eventos_temporales)
+    respuesta = next(e for e in lista if e["tipo"] == "respuesta_agente")["datos"]["texto"]
+    assert "esperando aprobación" in respuesta and "5.875,60 €" in respuesta and "supera el umbral de 3.000,00 €" in respuesta
+    assert any(e["tipo"] == "herramienta" and e["datos"]["nombre"] == "estado_oficina" for e in lista)
+    assert not any(e["tipo"] == "erp_escritura" for e in lista)
+    assert len((await estado_oficina())["tareas_de_hoy"]) == 1  # la pregunta no es una tarea

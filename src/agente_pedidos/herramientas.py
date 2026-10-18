@@ -70,6 +70,32 @@ def crear_herramientas_lectura(bc: ClienteBC) -> list[FunctionTool]:
     return [buscar_clientes, obtener_cliente, buscar_articulos, obtener_articulo]
 
 
+def crear_herramienta_estado_oficina() -> FunctionTool:
+    """Herramienta de solo lectura con el estado de la oficina (aprobaciones, tareas y pedidos de hoy).
+
+    No toca el ERP: lee los checkpoints (``AGENTE_CHECKPOINTS``) y ``eventos.jsonl``
+    (``AGENTE_EVENTOS``), lo mismo que dibuja la torre de control.
+    """
+
+    @tool(
+        name="estado_oficina",
+        description=(
+            "Estado de la oficina de agentes hoy: aprobaciones pendientes (cliente, importe, motivo de la "
+            "parada y desde cuándo), tareas del día con su paso actual y pedidos creados hoy. Úsala para "
+            "preguntas sobre pedidos en curso, en espera de aprobación o ya creados por el agente."
+        ),
+    )
+    async def estado_oficina() -> dict[str, Any]:
+        from .estado_oficina import estado_oficina as leer_estado  # aquí, para no importar el workflow en cadena
+
+        try:
+            return await leer_estado()
+        except Exception as error:  # un registro ilegible no debe tumbar la conversación
+            return {"error": f"No se pudo leer el estado de la oficina: {type(error).__name__}"}
+
+    return estado_oficina
+
+
 def crear_herramienta_escritura(bc: ClienteBC, requiere_aprobacion: bool = True) -> FunctionTool:
     """Herramienta de escritura: crea un pedido de venta. Por defecto exige aprobación humana.
 
