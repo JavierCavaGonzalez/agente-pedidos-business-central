@@ -28,7 +28,7 @@ from sse_starlette.sse import EventSourceResponse
 from watchfiles import awatch
 
 from agente_pedidos import eventos
-from agente_pedidos.workflow import aprobaciones_pendientes, crear_storage, motivo_para_no_reanudar
+from agente_pedidos.workflow import aprobaciones_pendientes, crear_storage, motivo_para_no_reanudar, motivo_por_modo
 
 from . import estado
 
@@ -192,8 +192,11 @@ def crear_app(config: Config | None = None) -> FastAPI:
             raise HTTPException(409, "Esta aprobación ya se está procesando.")
         try:
             motivo = await motivo_para_no_reanudar(storage, checkpoint_id)
-            if motivo is None and not any(a["checkpoint_id"] == checkpoint_id for a in await aprobaciones()):
+            pendiente = next((a for a in await aprobaciones() if a["checkpoint_id"] == checkpoint_id), None)
+            if motivo is None and pendiente is None:
                 motivo = "No hay ninguna aprobación pendiente con ese checkpoint."
+            if motivo is None:
+                motivo = motivo_por_modo(pendiente["modo_erp"], os.environ.get("BC_MODO", "demo"))
         except Exception:
             raise HTTPException(404, "No existe ese checkpoint.") from None
         if motivo:
@@ -268,6 +271,7 @@ def _aprobacion(checkpoint_id: str, ts: str, datos: Any) -> dict[str, Any]:
         "motivo": "; ".join(leer("motivos", []) or []),
         "resumen": leer("resumen"),
         "referencia": validado.get("referencia_cliente"),
+        "modo_erp": leer("modo_erp"),
     }
 
 

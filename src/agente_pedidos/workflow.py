@@ -23,6 +23,7 @@ Grafo::
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,6 +70,7 @@ class SolicitudAprobacion:
     motivos: list[str] = field(default_factory=list)
     pedido_validado: dict[str, Any] = field(default_factory=dict)  # PedidoValidado serializado
     tarea: str | None = None  # para que «reanudar», en otro proceso, siga contando en la misma tarea
+    modo_erp: str | None = None  # demo | api: una aprobación de la simulación no se resuelve contra el ERP real
 
 
 @dataclass
@@ -149,6 +151,7 @@ class AprobacionHumana(Executor):
             motivos=list(validado.motivos_aprobacion),
             pedido_validado=validado.model_dump(),
             tarea=eventos.tarea_actual(),
+            modo_erp=os.environ.get("BC_MODO", "demo"),
         )
         eventos.emitir("paso", nombre="aprobacion_humana", descripcion="Esperando la decisión del director")
         await ctx.request_info(solicitud, DecisionHumana)
@@ -405,6 +408,22 @@ async def aprobaciones_pendientes(storage: FileCheckpointStorage) -> list[Workfl
         if c.pending_request_info_events and c.checkpoint_id not in resueltas and c.checkpoint_id not in continuados
     ]
     return sorted(pendientes, key=lambda c: c.timestamp)
+
+
+def modo_de_la_solicitud(evento: Any) -> str | None:
+    datos = evento.get("data") if isinstance(evento, dict) else getattr(evento, "data", None)
+    return datos.get("modo_erp") if isinstance(datos, dict) else getattr(datos, "modo_erp", None)
+
+
+def motivo_por_modo(modo_solicitud: str | None, modo_actual: str) -> str | None:
+    """Una aprobación pedida con un ERP no se resuelve con otro: con el simulado se podría crear un
+    pedido real a partir de datos que solo existían en la simulación."""
+    if modo_solicitud and modo_solicitud != modo_actual:
+        return (
+            f"La aprobación se pidió con BC_MODO={modo_solicitud} y ahora está BC_MODO={modo_actual}: "
+            f"resuélvela con BC_MODO={modo_solicitud}."
+        )
+    return None
 
 
 async def motivo_para_no_reanudar(storage: FileCheckpointStorage, checkpoint_id: str) -> str | None:

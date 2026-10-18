@@ -38,7 +38,9 @@ from .workflow import (
     crear_storage,
     dibujar_mermaid,
     marcar_resuelto,
+    modo_de_la_solicitud,
     motivo_para_no_reanudar,
+    motivo_por_modo,
 )
 
 CORREOS_DEMO = ["01_pedido_pequeno.txt", "02_pedido_grande.txt", "03_cliente_bloqueado.txt", "04_con_dudas.txt"]
@@ -271,15 +273,19 @@ async def cmd_reanudar(checkpoint_id: str, decision_texto: str, comentario: str,
         # Reanudar dos veces la misma aprobación podría crear el pedido dos veces.
         print(f"No se reanuda el checkpoint {checkpoint_id}. {motivo}")
         return 1
-    middleware = crear_middleware()
-    bc = crear_cliente_bc(auditoria=middleware[0])
-    piezas = construir_workflow(bc, Politica.desde_entorno(), storage, middleware)
     checkpoint = await storage.load(checkpoint_id)
     pendientes = list(checkpoint.pending_request_info_events.keys())
     if not pendientes:
         print("Ese checkpoint no tiene ninguna aprobación pendiente.")
-        await bc.cerrar()
         return 1
+    # Antes de conectar con ningún ERP: ¿se pidió con el mismo?
+    motivo = motivo_por_modo(modo_de_la_solicitud(checkpoint.pending_request_info_events[pendientes[0]]), os.environ.get("BC_MODO", "demo"))
+    if motivo:
+        print(f"No se reanuda el checkpoint {checkpoint_id}. {motivo}")
+        return 1
+    middleware = crear_middleware()
+    bc = crear_cliente_bc(auditoria=middleware[0])
+    piezas = construir_workflow(bc, Politica.desde_entorno(), storage, middleware)
     decision = DecisionHumana(aprobado=decision_texto == "si", comentario=comentario, aprobador=aprobador)
     # La tarea sigue siendo la del «procesar» original: su id viaja dentro del checkpoint.
     tarea = _tarea_de_la_solicitud(checkpoint.pending_request_info_events[pendientes[0]])

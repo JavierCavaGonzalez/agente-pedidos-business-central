@@ -184,6 +184,11 @@ function crearTarjeta(a) {
     el("button", { class: "denegar", type: "button", onclick: () => responder("no") }, "Denegar"),
     el("button", { class: "ver", type: "button", onclick: () => (detalle.hidden = !detalle.hidden) }, "Ver detalle"),
   ];
+  // Una aprobación pedida con otro ERP (p. ej. con el simulado) no se resuelve contra este.
+  if (a.modo_erp && estado && a.modo_erp !== estado.modo_erp) {
+    botones[0].disabled = botones[1].disabled = true;
+    situacion.textContent = `Se pidió con el ERP ${a.modo_erp === "api" ? "real (api)" : "simulado (demo)"}: arranca la oficina en ese modo para resolverla.`;
+  }
   return el("article", { class: "tarjeta", "aria-label": `Aprobación pendiente: ${a.cliente}` },
     el("h3", {}, "APROBACIÓN NECESARIA"),
     el("div", {}, el("strong", {}, a.cliente), a.referencia ? ` · ref. ${a.referencia}` : ""),

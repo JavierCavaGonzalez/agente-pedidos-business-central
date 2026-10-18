@@ -134,3 +134,12 @@ def test_de_extremo_a_extremo_asignar_esperar_aprobar_y_pedido_creado(oficina):
     assert any(e.get("evento") == "escritura_erp" and e["resultado"]["number"] == tarea_hecha["pedido"] for e in auditoria)
     assert (oficina.config.bandeja / f"{tarea}.txt").read_text(encoding="utf-8") == correo
     assert next(t for t in oficina.get("/api/estado").json()["tareas"] if t["id"] == tarea)["origen"] == "02_pedido_grande.txt"
+
+
+async def test_la_oficina_no_resuelve_una_aprobacion_de_otro_modo_de_erp(oficina, monkeypatch):
+    await cmd_procesar(str(CORREOS / "02_pedido_grande.txt"), "pendiente", "ana")
+    [aprobacion] = oficina.get("/api/aprobaciones").json()
+    assert aprobacion["modo_erp"] == "demo"
+    monkeypatch.setenv("BC_MODO", "api")
+    respuesta = oficina.post(f"/api/aprobaciones/{aprobacion['checkpoint_id']}", json={"decision": "si", "aprobador": "Javier"})
+    assert respuesta.status_code == 409 and "BC_MODO=demo" in respuesta.json()["detail"]
