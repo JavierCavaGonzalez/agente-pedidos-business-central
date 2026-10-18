@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -61,7 +62,42 @@ def cargar_entorno() -> None:
         if not linea or linea.startswith("#") or "=" not in linea:
             continue
         clave, valor = linea.split("=", 1)
-        os.environ.setdefault(clave.strip(), valor.strip().strip('"').strip("'"))
+        os.environ.setdefault(clave.strip(), _valor_env(valor))
+
+
+def _valor_env(bruto: str) -> str:
+    """Como python-dotenv: entre comillas se respeta todo (también '#'); sin comillas, ' #...' es un comentario."""
+    valor = bruto.lstrip()
+    if valor[:1] in ('"', "'"):
+        cierre = valor.find(valor[0], 1)
+        if cierre != -1:
+            return valor[1:cierre]
+    # Sobre el valor sin recortar, para que "CLAVE= # comentario" quede vacío y "CLAVE=a#b" conserve el '#'.
+    return re.split(r"\s+#", bruto, maxsplit=1)[0].strip()
+
+
+RESPUESTAS_SI = ("s", "si", "sí", "y", "yes")
+
+
+def preguntar_aprobacion(pregunta: str, auditoria: AuditoriaHerramientas, que: str) -> bool:
+    """Pide la aprobación por consola. Sin terminal o sin respuesta (EOF) se deniega y se audita.
+
+    Una escritura en el ERP nunca se aprueba por defecto: si nadie puede contestar, la respuesta es no.
+    """
+    motivo = None
+    if not sys.stdin.isatty():
+        motivo = "no hay terminal para preguntar"
+    else:
+        try:
+            # En Windows, NUL dice ser una terminal: ahí input() lanza EOFError.
+            respuesta = input(pregunta)
+        except EOFError:
+            motivo = "la consola no devolvió respuesta (EOF)"
+    if motivo:
+        print(f"\nAprobación denegada: {motivo}.")
+        auditoria.registrar({"evento": "aprobacion_denegada", "motivo": motivo, "solicitud": que})
+        return False
+    return respuesta.strip().lower() in RESPUESTAS_SI
 
 
 def imprimir_resultado(resultado: ResultadoPedido) -> None:
@@ -107,9 +143,13 @@ async def cmd_procesar(ruta_correo: str, modo_aprobacion: str, aprobador: str) -
             await bc.cerrar()
             return 0
         if modo_aprobacion == "preguntar":
-            respuesta = input("\n¿Crear el pedido? [s/n] ").strip().lower()
-            aprobado = respuesta in ("s", "si", "sí", "y", "yes")
-            comentario = input("Comentario (opcional): ").strip()
+            aprobado = preguntar_aprobacion("\n¿Crear el pedido? [s/n] ", middleware[0], f"crear pedido ({ruta_correo})")
+            comentario = "" if sys.stdin.isatty() else "denegado: no hay terminal para preguntar"
+            if sys.stdin.isatty():
+                try:
+                    comentario = input("Comentario (opcional): ").strip()
+                except EOFError:
+                    comentario = "denegado: la consola no devolvió respuesta (EOF)"
         else:
             aprobado = modo_aprobacion == "si"
             comentario = "aprobación automática desde la línea de comandos" if aprobado else "rechazo automático desde la línea de comandos"
@@ -183,11 +223,12 @@ async def cmd_chat(mensaje: str, aprobador: str) -> int:
         print("\n=== EL AGENTE QUIERE EJECUTAR UNA HERRAMIENTA PROTEGIDA ===")
         print("Herramienta:", peticion.function_call.name)
         print("Argumentos:", json.dumps(peticion.function_call.parse_arguments(), ensure_ascii=False, indent=2))
-        if sys.stdin.isatty():
-            aprobado = input("¿Aprobar? [s/n] ").strip().lower() in ("s", "si", "sí", "y", "yes")
-        else:
-            aprobado = os.environ.get("CHAT_APROBAR", "no") == "si"
+        if not sys.stdin.isatty() and "CHAT_APROBAR" in os.environ:
+            # Decisión explícita para ejecuciones sin terminal (scripts, pruebas).
+            aprobado = os.environ["CHAT_APROBAR"] == "si"
             print("Decisión (CHAT_APROBAR):", "aprobar" if aprobado else "rechazar")
+        else:
+            aprobado = preguntar_aprobacion("¿Aprobar? [s/n] ", middleware[0], f"{peticion.function_call.name} (chat)")
         contenido = peticion.to_function_approval_response(approved=aprobado)
         respuesta = await agente.run(Message("user", [contenido]), session=sesion)
         contador.registrar(respuesta)

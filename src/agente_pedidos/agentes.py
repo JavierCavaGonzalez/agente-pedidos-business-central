@@ -59,12 +59,9 @@ def crear_agente_asistente(bc: ClienteBC, middleware: Sequence[Any] = (), client
         client=cliente_modelo or crear_cliente_modelo(papel="asistente"),
         name="asistente_pedidos",
         description="Asistente conversacional que consulta Business Central y crea pedidos con aprobación.",
-        instructions=(
-            leer_prompt("interprete")
-            + "\n\nModo asistente: además de interpretar, cuando tengas cliente y artículos identificados "
-            "llama a `crear_pedido_venta`. Esa herramienta requiere la aprobación de una persona; "
-            "si se rechaza, no insistas y explica qué faltaría."
-        ),
+        # Instrucciones propias: las del intérprete piden devolver solo el objeto estructurado, y un
+        # modelo real que las obedece contesta con un JSON en lugar de confirmar el pedido.
+        instructions=leer_prompt("asistente"),
         tools=[*crear_herramientas_lectura(bc), crear_herramienta_escritura(bc, requiere_aprobacion=True)],
         middleware=list(middleware),
         default_options={"temperature": 0},

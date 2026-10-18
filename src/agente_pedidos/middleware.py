@@ -48,13 +48,17 @@ class AuditoriaHerramientas(FunctionMiddleware):
         if not isinstance(argumentos, dict):
             argumentos = {"valor": str(argumentos)}
         await call_next()
-        evento = {
+        self.registrar({
             "instante": inicio.isoformat(),
             "herramienta": context.function.name,
             "argumentos": argumentos,
             "resultado": _resumir(context.result),
             "duracion_ms": int((datetime.now(timezone.utc) - inicio).total_seconds() * 1000),
-        }
+        })
+
+    def registrar(self, evento: dict[str, Any]) -> None:
+        """Añade un evento al registro (herramientas y también decisiones como una aprobación denegada)."""
+        evento = {"instante": datetime.now(timezone.utc).isoformat(), **evento}
         self.eventos.append(evento)
         with self.ruta.open("a", encoding="utf-8") as fichero:
             fichero.write(json.dumps(evento, ensure_ascii=False, default=str) + "\n")

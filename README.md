@@ -39,7 +39,7 @@ Funciona **sin ninguna credencial** en modo demo (modelo simulado + Business Cen
 | Pieza del esqueleto | Dónde está | Qué hace aquí |
 |---|---|---|
 | **Agente** (`Agent`) | `src/agente_pedidos/agentes.py` | Tres agentes: `interprete` (lee el correo), `redactor` (responde al cliente) y `asistente_pedidos` (variante de chat) |
-| **Instrucciones** (system prompt) | `prompts/interprete.md`, `prompts/redactor.md` | En español, versionadas, legibles sin abrir el código |
+| **Instrucciones** (system prompt) | `prompts/interprete.md`, `prompts/redactor.md`, `prompts/asistente.md` | En español, versionadas, legibles sin abrir el código |
 | **Cliente de modelo** | `src/agente_pedidos/modelo.py` | `OpenAIChatClient` (OpenAI/Azure OpenAI), `FoundryChatClient` (Microsoft Foundry) o `ClienteSimulado` (sin red) según `MODELO_PROVEEDOR` |
 | **Herramientas** (`@tool`) que leen y escriben en el ERP | `src/agente_pedidos/herramientas.py` | Cuatro de lectura (`buscar_clientes`, `obtener_cliente`, `buscar_articulos`, `obtener_articulo`) y una de escritura (`crear_pedido_venta`) con `approval_mode="always_require"` |
 | **Acceso a Business Central** | `src/agente_pedidos/bc/` | Interfaz común `ClienteBC`; `ClienteApiV2` (API v2.0 real, OAuth cliente-credenciales) y `ClienteDemo` (datos simulados) |
@@ -52,7 +52,7 @@ Funciona **sin ninguna credencial** en modo demo (modelo simulado + Business Cen
 | **MCP** | `src/agente_pedidos/mcp_server.py` | Servidor MCP opcional con las lecturas del ERP y `MCPStdioTool` para consumirlo desde el agente |
 | **DevUI** | `devui/` | Entidades para la interfaz de pruebas del framework (beta) |
 | **Línea de comandos** | `src/agente_pedidos/cli.py` | `demo`, `procesar`, `pendientes`, `reanudar`, `chat`, `grafo` |
-| **Pruebas** | `tests/` | 22 pruebas sin modelo real ni ERP real (incluida la reanudación desde checkpoint) |
+| **Pruebas** | `tests/` | 27 pruebas sin modelo real ni ERP real (incluida la reanudación desde checkpoint) |
 
 ## 2. Los escenarios y por qué este
 
@@ -118,7 +118,8 @@ Alternativa sin `PYTHONPATH`: `pip install -e .` y después `agente-pedidos demo
 ## 6. Los comandos, uno a uno
 
 ```bash
-# Procesa un correo. Si hace falta aprobación, la pide por consola.
+# Procesa un correo. Si hace falta aprobación, la pide por consola. Sin terminal (o si la consola
+# devuelve EOF) la aprobación se deniega y queda en la auditoría: para scripts usa --aprobar.
 python -m agente_pedidos procesar ejemplos/correos/02_pedido_grande.txt
 
 # Igual, pero deja la aprobación pendiente en un checkpoint y termina.
@@ -133,6 +134,7 @@ python -m agente_pedidos reanudar --checkpoint <ID> --decision no --aprobador "A
 
 # Variante conversacional: aprobación a nivel de agente (approval_mode="always_require").
 python -m agente_pedidos chat "Empresa: Adatum Corporation. Necesito 5 lámparas AMSTERDAM"
+# Sin terminal, la decisión se toma de CHAT_APROBAR=si|no; si no está definida, se deniega.
 
 # El grafo del workflow en Mermaid (generado por WorkflowViz).
 python -m agente_pedidos grafo
@@ -229,7 +231,7 @@ Aparecen dos entidades: el agente `interprete` y el workflow `pedidos`, ambos co
 python -m pytest -q
 ```
 
-22 pruebas, todas sin modelo real ni Business Central real (modelo simulado y `ClienteDemo`): reglas de negocio, cliente de demostración, los cuatro recorridos del workflow (creación automática, aprobación con reanudación desde checkpoint en una instancia nueva, rechazo humano, rechazo por validación), aprobación a nivel de agente (aceptar y rechazar), middleware de solo lectura y de presupuesto, y la integración MCP (se omite si `mcp` no está instalado).
+27 pruebas, todas sin modelo real ni Business Central real (modelo simulado y `ClienteDemo`): reglas de negocio, cliente de demostración, los cuatro recorridos del workflow (creación automática, aprobación con reanudación desde checkpoint en una instancia nueva, rechazo humano, rechazo por validación), aprobación a nivel de agente (aceptar, rechazar y confirmar en texto tras crear el pedido), aprobación por consola sin terminal o con EOF (se deniega y se audita), middleware de solo lectura y de presupuesto, lectura de `.env` (comentarios al final de línea), y la integración MCP (se omite si `mcp` no está instalado).
 
 ## 12. Estructura del repositorio y qué hace cada archivo
 
@@ -242,12 +244,14 @@ agente-pedidos-business-central/
 ├── .gitignore                    ← excluye .env, checkpoints y auditorías
 ├── prompts/
 │   ├── interprete.md             ← instrucciones del agente intérprete
-│   └── redactor.md               ← instrucciones del agente redactor
+│   ├── redactor.md               ← instrucciones del agente redactor
+│   └── asistente.md              ← instrucciones del asistente de chat (confirma en texto, nunca en JSON)
 ├── ejemplos/correos/             ← cuatro correos de prueba (uno por recorrido)
 ├── devui/                        ← entidades para DevUI (agente y workflow)
 ├── docs/
 │   ├── arquitectura.md           ← diagramas (esqueleto, recorrido, workflow)
-│   └── PROMPT-CLAUDE-CODE.md     ← prompt para reconstruir el proyecto con Claude Code
+│   ├── PROMPT-CLAUDE-CODE.md     ← prompt para reconstruir el proyecto con Claude Code
+│   └── notas-de-construccion.md  ← fallos encontrados al probarlo con un modelo real y cómo se corrigieron
 ├── src/agente_pedidos/
 │   ├── __main__.py               ← permite `python -m agente_pedidos`
 │   ├── cli.py                    ← comandos demo / procesar / pendientes / reanudar / chat / grafo
@@ -285,7 +289,7 @@ Detalle de cada pieza:
 
 - **Modelo simulado**: imita a un modelo con reglas (un diccionario de palabras y expresiones regulares). Sirve para ver el esqueleto completo y para las pruebas, no para medir la calidad de interpretación; con correos distintos a los de ejemplo se equivocará. Con un modelo real, el intérprete usa las instrucciones de `prompts/interprete.md`.
 - **Business Central**: el cliente real cubre clientes, artículos y pedidos de venta de la API v2.0 estándar. No registra (post) pedidos ni toca otras entidades, a propósito. La identidad de aplicación debe tener solo los permisos necesarios; el ejemplo no los crea por ti.
-- **Aprobación**: la pide por consola o la deja en un checkpoint. Llevarla a Teams, Outlook o una página de Business Central es trabajo de la aplicación (el workflow ya expone la petición y la reanudación).
+- **Aprobación**: la pide por consola (sin terminal, se deniega) o la deja en un checkpoint. Llevarla a Teams, Outlook o una página de Business Central es trabajo de la aplicación (el workflow ya expone la petición y la reanudación).
 - **Identidad y gobierno del tenant**: el framework no da Entra Agent ID ni registro en Agent 365 por sí mismo; eso llega al desplegarlo como hosted agent en Microsoft Foundry o con el SDK de Agent 365.
 - **Versiones**: fijado a `agent-framework==1.22.0`. Las versiones posteriores pueden cambiar nombres (ha ocurrido tras la 1.0); revisa `CHANGELOG.md` del repositorio oficial antes de actualizar.
 - **Siguientes pasos razonables**: desplegar como hosted agent en Foundry (`azd`), exportar trazas a Application Insights, añadir una suite de evaluación con correos reales anonimizados (desarrollo guiado por evaluación, cap. 10 del libro) y sustituir la entrada por fichero por un buzón real (Microsoft Graph).

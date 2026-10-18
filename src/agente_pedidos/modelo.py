@@ -101,6 +101,8 @@ PALABRAS_VACIAS = {
     "de", "del", "la", "las", "el", "los", "y", "para", "con", "en", "un", "una", "unos", "unas",
     "x", "uds", "ud", "unidades", "unidad", "por", "favor", "nos", "me", "que", "al",
 }
+# Frase de prompts/interprete.md que pide responder solo con el objeto estructurado.
+SOLO_OBJETO_ESTRUCTURADO = "Devuelve exclusivamente el objeto estructurado"
 
 
 class ClienteSimulado(FunctionInvocationLayer, ChatMiddlewareLayer, ChatTelemetryLayer, BaseChatClient):
@@ -114,7 +116,9 @@ class ClienteSimulado(FunctionInvocationLayer, ChatMiddlewareLayer, ChatTelemetr
     Comportamiento por papel:
     - ``interprete``: lee la petición, llama a ``buscar_clientes`` y a ``buscar_articulos`` y
       devuelve el JSON de ``PedidoInterpretado``.
-    - ``asistente``: igual, pero termina llamando a ``crear_pedido_venta`` (que requiere aprobación).
+    - ``asistente``: igual, pero termina llamando a ``crear_pedido_venta`` (que requiere aprobación)
+      y, tras crearlo, confirma en texto; si sus instrucciones piden solo el objeto estructurado,
+      devuelve el JSON como haría un modelo real que las obedece.
     - ``redactor``: redacta una respuesta breve a partir del resumen que recibe.
     """
 
@@ -134,7 +138,7 @@ class ClienteSimulado(FunctionInvocationLayer, ChatMiddlewareLayer, ChatTelemetr
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         self.llamadas += 1
-        respuesta = self._responder(list(messages))
+        respuesta = self._responder(list(messages), str(options.get("instructions") or ""))
 
         if stream:
 
@@ -153,7 +157,7 @@ class ClienteSimulado(FunctionInvocationLayer, ChatMiddlewareLayer, ChatTelemetr
         return _obtener()
 
     # --- "razonamiento" simulado --------------------------------------------------
-    def _responder(self, mensajes: list[Message]) -> ChatResponse:
+    def _responder(self, mensajes: list[Message], instrucciones: str = "") -> ChatResponse:
         texto_usuario = _ultimo_texto_usuario(mensajes)
         llamadas, resultados = _llamadas_y_resultados(mensajes)
         if self.papel == "redactor":
@@ -192,6 +196,10 @@ class ClienteSimulado(FunctionInvocationLayer, ChatMiddlewareLayer, ChatTelemetr
                     + "; ".join(pedido["dudas"] or ["faltan datos"]),
                     texto_usuario,
                 )
+            # Como un modelo real: si las instrucciones piden solo el objeto estructurado, obedece
+            # y devuelve el JSON en lugar de confirmar el pedido en texto.
+            if SOLO_OBJETO_ESTRUCTURADO in instrucciones:
+                return _respuesta_texto(json.dumps(pedido, ensure_ascii=False), texto_usuario)
             resultado = resultados.get(creaciones[-1]["call_id"])
             return _respuesta_texto(_resumir_creacion(resultado), texto_usuario)
 

@@ -8,6 +8,7 @@ from agent_framework import Message
 from agente_pedidos.agentes import crear_agente_asistente
 from agente_pedidos.bc import ClienteDemo
 from agente_pedidos.middleware import AuditoriaHerramientas, PresupuestoLlamadas, SoloLectura
+from agente_pedidos.modelo import SOLO_OBJETO_ESTRUCTURADO
 
 PETICION = "Empresa: Adatum Corporation. Necesito 5 lámparas AMSTERDAM"
 
@@ -34,6 +35,22 @@ async def test_la_escritura_se_detiene_hasta_que_una_persona_aprueba(tmp_path, m
     assert "S-ORD" in (final.text or "")
     assert len(bc.pedidos) == 1 and bc.pedidos[0]["totalAmountExcludingTax"] == pytest.approx(5 * 55.9)
     assert [e["herramienta"] for e in auditoria.eventos] == ["buscar_clientes", "buscar_articulos", "crear_pedido_venta"]
+
+
+@pytest.mark.asyncio
+async def test_tras_aprobar_el_asistente_confirma_en_texto_y_no_en_json(monkeypatch):
+    # Caso visto con gpt-4.1-mini: con las instrucciones del intérprete («devuelve exclusivamente el
+    # objeto estructurado») el asistente contestaba con un PedidoInterpretado en JSON. El simulado
+    # obedece esa frase igual que el modelo real, así que esta prueba falla si se vuelve a heredar.
+    monkeypatch.setenv("MODELO_PROVEEDOR", "simulado")
+    agente = crear_agente_asistente(ClienteDemo())
+    assert SOLO_OBJETO_ESTRUCTURADO not in agente.default_options["instructions"]
+    sesion = agente.create_session()
+    respuesta = await agente.run(PETICION, session=sesion)
+    aprobacion = respuesta.user_input_requests[0].to_function_approval_response(approved=True)
+    texto = (await agente.run(Message("user", [aprobacion]), session=sesion)).text or ""
+    assert not texto.lstrip().startswith("{")
+    assert "S-ORD" in texto
 
 
 @pytest.mark.asyncio

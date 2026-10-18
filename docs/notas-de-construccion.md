@@ -1,0 +1,90 @@
+# Notas de construcción
+
+Cambios hechos después de la primera versión, con el motivo de cada uno. Lo que funciona a la primera no se apunta aquí; lo que falló, sí.
+
+## 2026-10-18 · Los comentarios al final de línea en `.env` se colaban en los valores
+
+**Síntoma.** Con un `.env` copiado de `.env.example`, `python -m agente_pedidos procesar …` se caía al arrancar, antes de llamar al modelo:
+
+```
+File "src/agente_pedidos/middleware.py", line 84, in __init__
+  self.maximo = ... int(os.environ.get("AGENTE_MAX_LLAMADAS_MODELO", "12"))
+ValueError: invalid literal for int() with base 10: '12    # tope de llamadas al modelo por ejecución'
+```
+
+**Causa.** Dos piezas que por separado parecían correctas:
+
+- `.env.example` documentaba cuatro variables con un comentario detrás del valor (`AGENTE_MAX_LLAMADAS_MODELO=12    # tope de…`).
+- `cargar_entorno()` en `cli.py` es un lector de `.env` hecho a mano que solo ignoraba las líneas que *empiezan* por `#`. Con un comentario al final de la línea, el comentario entraba en el valor.
+
+**Lo más grave no era el error, sino lo que fallaba sin avisar.** `AGENTE_MAX_LLAMADAS_MODELO` se rompía de forma visible porque se convierte a entero. Las otras tres variables seguían funcionando con un valor incorrecto:
+
+- `AGENTE_SOLO_LECTURA=1   # comentario` daba `"1   # comentario"`, que no es `"1"`: **el modo solo lectura quedaba desactivado** aunque la persona lo hubiera activado. Es justo el control que debe bloquear las escrituras en el ERP.
+- `AGENTE_AUDITORIA` y `AGENTE_CHECKPOINTS` se convertían en rutas con el comentario dentro.
+
+**Por qué no lo detectó la revisión.** El modo demo y las 22 pruebas funcionan **sin `.env`**: toman los valores por defecto del código y nunca pasan por `cargar_entorno()`. El fallo solo aparece cuando alguien copia `.env.example` a `.env` para conectar un modelo real, que es el primer paso fuera de la demo. Ninguna prueba cargaba un `.env`.
+
+**Corrección.**
+
+1. `cargar_entorno()` interpreta los valores como `python-dotenv` (función nueva `_valor_env`):
+   - sin comillas, un `#` precedido de espacio empieza un comentario y se descarta (`CLAVE=1   # …` → `1`; `CLAVE=   # …` → vacío);
+   - un `#` sin espacio delante se conserva (`CLAVE=abc#def` → `abc#def`);
+   - entre comillas simples o dobles se conserva todo, `#` incluido, y se ignora lo que vaya después de la comilla de cierre.
+2. `.env.example`: los comentarios pasan a su propia línea, y se añade una línea que lo pide. Se hace lo mismo con las asignaciones comentadas de observabilidad (`# ENABLE_CONSOLE_EXPORTERS=1   # …`), para que al descomentarlas no reaparezca el problema. Esto también protege a quien cargue el fichero con otras herramientas que no quitan comentarios, como `docker --env-file`.
+3. Se aplicó el mismo cambio al `.env` local (que no está en el repositorio).
+4. Prueba nueva `tests/test_entorno.py` (2 casos): carga un `.env` temporal con `AGENTE_SOLO_LECTURA=1   # comentario` y comprueba que `SoloLectura().activo` es `True` y que `PresupuestoLlamadas().maximo` es `12`; además comprueba que se conserva el `#` entre comillas y sin espacio delante. Ambos casos **fallan con el `cli.py` anterior** y pasan con el nuevo. Total: 24 pruebas.
+
+**Lección.** Un control de seguridad configurable (aquí, el solo lectura) necesita una prueba que lo active **por el mismo camino que usará la persona**, no solo construyendo el objeto con `activo=True`.
+
+## 2026-10-18 · `chat` respondía con un JSON en lugar de confirmar el pedido
+
+**Síntoma.** Con `gpt-4.1-mini`, tras aprobar `crear_pedido_venta`, el pedido se creaba (S-ORD101001), pero la respuesta final del asistente era un `PedidoInterpretado` en JSON (`numero_cliente`, `lineas`, `referencia_externa`, `dudas`, `resumen`) en lugar de una frase con el número de pedido.
+
+**Primer diagnóstico, equivocado.** Al principio se anotó que `respuesta.text` llegaba vacío. No era así: la CLI sí imprimía el texto, pero el filtro que se usó para ocultar las trazas de OpenTelemetry en la salida (que se saltaba los bloques entre una línea que empieza por `{` y otra que empieza por `}`) ocultaba también ese JSON. Ni el framework ni la CLI tenían ningún fallo. Se descubrió al volver a ejecutar con `ENABLE_SENSITIVE_DATA=1` y leer `gen_ai.output.messages` de la última llamada `chat`, y al mirar la salida en bruto. Lección: para diagnosticar, mirar la salida sin filtrar antes de concluir que algo falta.
+
+**Causa (código del ejemplo, no del framework).** `crear_agente_asistente()` construía las instrucciones a partir de `prompts/interprete.md`, que dice «no respondes al cliente» y «Devuelve exclusivamente el objeto estructurado que se te pide». Un modelo real las obedece: tras la herramienta, devuelve el objeto. El párrafo añadido («Modo asistente: …») no decía cómo contestar al final.
+
+**Por qué no lo detectaron las pruebas.** El modelo simulado no leía las instrucciones: en el papel `asistente` siempre confirmaba en texto, así que `"S-ORD" in final.text` pasaba con cualquier prompt.
+
+**Corrección.**
+
+1. `prompts/asistente.md`: instrucciones propias del asistente. Usa las mismas herramientas y reglas de identificación, llama a `crear_pedido_venta` y, cuando la herramienta responde, contesta en texto con el número, el cliente, las líneas y el total; nunca en JSON. `agentes.py` lo carga con `leer_prompt("asistente")`.
+2. `modelo.py`: el `ClienteSimulado` lee `options["instructions"]` y, en el papel `asistente`, si contienen «Devuelve exclusivamente el objeto estructurado» (`SOLO_OBJETO_ESTRUCTURADO`), devuelve el JSON del pedido, como hizo `gpt-4.1-mini`.
+3. Prueba nueva `test_tras_aprobar_el_asistente_confirma_en_texto_y_no_en_json` en `tests/test_chat_aprobacion.py`: comprueba que las instrucciones del asistente no piden el objeto estructurado y que, tras aprobar, el texto no empieza por `{` y contiene el número de pedido. Con el `agentes.py` anterior falla (y con él otras tres pruebas del mismo fichero, por la misma causa).
+
+**Pendiente.** La corrección está verificada con el modelo simulado; falta una ejecución de `chat` con el modelo real para confirmar que ahora contesta en texto.
+
+## 2026-10-18 · Aprobación por consola sin terminal
+
+**Síntoma.** `chat` con stdin redirigido desde `NUL` (`< /dev/null` en Git Bash) se caía con `EOFError` en `input()`. `procesar` en modo `preguntar` llamaba siempre a `input()`, sin comprobar si había alguien delante.
+
+**Causa.** `cmd_chat` usaba `sys.stdin.isatty()` para elegir entre preguntar y leer `CHAT_APROBAR`, pero en Windows el dispositivo `NUL` dice ser una terminal (`isatty()` devuelve `True`), y `input()` recibe EOF. `cmd_procesar` no comprobaba nada: con una tubería, cualquier «s» que llegara por stdin aprobaba el pedido.
+
+**Corrección.** Función nueva `preguntar_aprobacion()` en `cli.py`, usada por `procesar` y `chat`:
+
+- si stdin no es una terminal, o `input()` lanza `EOFError`, la aprobación **se deniega** (una escritura en el ERP nunca se aprueba por defecto);
+- la denegación se escribe en la auditoría como `{"evento": "aprobacion_denegada", "motivo": …, "solicitud": …}`, con el nuevo `AuditoriaHerramientas.registrar()`, que también usan ahora los eventos de herramientas;
+- en `chat`, `CHAT_APROBAR=si|no` sigue siendo la decisión explícita para ejecuciones sin terminal; si no está definida, se deniega.
+
+**Cambio de comportamiento.** Pasar la respuesta por tubería (`echo s | python -m agente_pedidos procesar …`) ya no aprueba: una tubería no es una persona. Para ejecuciones desatendidas se usa `--aprobar si|no|pendiente`.
+
+**Pruebas nuevas** (`tests/test_aprobacion_consola.py`, 2 casos): `procesar` con stdin por tubería que contiene «s» deniega, no crea el pedido y deja la denegación en la auditoría; `chat` con una consola que devuelve EOF deniega y `crear_pedido_venta` no llega a ejecutarse. Ambas fallan con el código anterior. Total: 27 pruebas.
+
+## 2026-10-18 · Ejecuciones con el modelo real: llamadas y coste
+
+Azure OpenAI, despliegue `gpt-4.1-mini`, `BC_MODO=demo` (ERP simulado: no se escribió nada real). Las llamadas al modelo salen de las trazas (`ENABLE_CONSOLE_EXPORTERS=1`, spans `chat`); sus tokens cuadran con la línea «Coste» de la CLI. El coste está calculado con las tarifas por defecto del ejemplo (2 € por millón de tokens de entrada y 8 € por millón de salida), no con la tarifa real de Azure.
+
+| # | Ejecución | Resultado | Llamadas al modelo | Tokens entrada / salida | Coste estimado |
+|---|---|---|---|---|---|
+| 1 | `procesar 02_pedido_grande.txt` | Fallo al leer `.env` antes de llamar al modelo | 0 | 0 / 0 | 0 € |
+| 2 | `procesar 02_pedido_grande.txt` («s» por tubería) | Se para a pedir aprobación; aprobado; S-ORD101001 creado | 3 (2 intérprete + 1 redactor) | 3.137 / 324 | 0,0089 € |
+| 3 | `chat …` (stdin desde `NUL`) | Pide aprobación; `EOFError` al preguntar | 2 | 1.807 / 92 | 0,0044 € |
+| 4 | `chat …` (`CHAT_APROBAR=si`) | Pedido creado; respuesta final en JSON | 3 | 2.875 / 177 | 0,0072 € |
+| 5 | `chat …` (`CHAT_APROBAR=si`, `ENABLE_SENSITIVE_DATA=1`, diagnóstico) | Igual que la 4 | 3 | 2.875 / 177 | 0,0072 € |
+| 6 | `procesar 02_pedido_grande.txt --aprobar si` (tras las correcciones) | Igual que la 2 | 3 (2 + 1) | 3.141 / 337 | 0,0090 € |
+| | **Total del día** | | **14** | **13.835 / 1.107** | **≈ 0,0365 €** |
+
+Observaciones:
+
+- La línea «Coste» de la CLI dice «2 respuesta(s) de agente»: cuenta respuestas de agente, no llamadas al modelo. Un agente con herramientas hace varias llamadas por respuesta (el intérprete hace 2: una para pedir las búsquedas, otra para devolver el pedido).
+- El intérprete pidió las tres búsquedas (`buscar_clientes` y dos `buscar_articulos`) en una sola llamada, en paralelo; el modelo simulado las pide de una en una.
