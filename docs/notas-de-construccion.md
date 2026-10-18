@@ -52,7 +52,15 @@ ValueError: invalid literal for int() with base 10: '12    # tope de llamadas al
 2. `modelo.py`: el `ClienteSimulado` lee `options["instructions"]` y, en el papel `asistente`, si contienen «Devuelve exclusivamente el objeto estructurado» (`SOLO_OBJETO_ESTRUCTURADO`), devuelve el JSON del pedido, como hizo `gpt-4.1-mini`.
 3. Prueba nueva `test_tras_aprobar_el_asistente_confirma_en_texto_y_no_en_json` en `tests/test_chat_aprobacion.py`: comprueba que las instrucciones del asistente no piden el objeto estructurado y que, tras aprobar, el texto no empieza por `{` y contiene el número de pedido. Con el `agentes.py` anterior falla (y con él otras tres pruebas del mismo fichero, por la misma causa).
 
-**Pendiente.** La corrección está verificada con el modelo simulado; falta una ejecución de `chat` con el modelo real para confirmar que ahora contesta en texto.
+**Verificación con el modelo real (2026-10-18): no superada.** `CHAT_APROBAR=si python -m agente_pedidos chat "Empresa: Adatum Corporation. Necesito 5 lámparas AMSTERDAM"` con `gpt-4.1-mini`:
+
+- La respuesta final ya es texto, no JSON: «He encontrado el cliente Adatum Corporation y el artículo AMSTERDAM Lamp con número 1928-S. ¿Confirmas que quieres pedir 5 unidades de esta lámpara?».
+- Pero el modelo **no llamó a `crear_pedido_venta`**: hizo `buscar_clientes` y `buscar_articulos` (auditoría) y después pidió confirmación en el chat. No hubo petición de aprobación, `CHAT_APROBAR` no llegó a usarse y no se creó ningún pedido, así que no hay número de pedido, líneas ni total que comprobar.
+- 3 llamadas al modelo (740/18, 802/20 y 870/37 tokens de entrada/salida; esta vez pidió las dos búsquedas en llamadas separadas), 2.412 / 75 tokens en total, coste estimado 0,0054 €. La CLI dice «1 respuesta(s) de agente».
+
+**Causa probable: el prompt nuevo.** `prompts/asistente.md` dice «Es mejor preguntar que suponer» y «si no está claro, pregunta», pero no aclara que la aprobación de `crear_pedido_venta` ya es la confirmación de la persona. El modelo añadió su propia confirmación conversacional antes de la herramienta. Con el prompt anterior (el del intérprete) sí llamaba a la herramienta, pero luego contestaba en JSON.
+
+**Pendiente.** Ajustar `prompts/asistente.md` para que, con cliente, artículos y cantidades claros, llame a `crear_pedido_venta` sin pedir confirmación en el chat (la aprobación de la herramienta es esa confirmación), y repetir la verificación. La prueba con el modelo simulado no puede detectar esto: el simulado no decide si pregunta o no.
 
 ## 2026-10-18 · Aprobación por consola sin terminal
 
@@ -82,7 +90,8 @@ Azure OpenAI, despliegue `gpt-4.1-mini`, `BC_MODO=demo` (ERP simulado: no se esc
 | 4 | `chat …` (`CHAT_APROBAR=si`) | Pedido creado; respuesta final en JSON | 3 | 2.875 / 177 | 0,0072 € |
 | 5 | `chat …` (`CHAT_APROBAR=si`, `ENABLE_SENSITIVE_DATA=1`, diagnóstico) | Igual que la 4 | 3 | 2.875 / 177 | 0,0072 € |
 | 6 | `procesar 02_pedido_grande.txt --aprobar si` (tras las correcciones) | Igual que la 2 | 3 (2 + 1) | 3.141 / 337 | 0,0090 € |
-| | **Total del día** | | **14** | **13.835 / 1.107** | **≈ 0,0365 €** |
+| 7 | `chat …` (`CHAT_APROBAR=si`, con `prompts/asistente.md`) | Responde en texto, pero pide confirmación en el chat y no llama a `crear_pedido_venta`; sin pedido | 3 | 2.412 / 75 | 0,0054 € |
+| | **Total del día** | | **17** | **16.247 / 1.182** | **≈ 0,0420 €** |
 
 Observaciones:
 
