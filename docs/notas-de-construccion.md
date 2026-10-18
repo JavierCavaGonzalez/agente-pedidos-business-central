@@ -203,6 +203,28 @@ Para no duplicar líneas en `chat`, donde la escritura llega a través de la her
 
 **Pruebas nuevas** (`tests/test_auditoria_checkpoints.py`, 8; total 56): un pedido creado desde el workflow aparece en `auditoria.jsonl` con sus líneas; en `chat` la escritura deja una sola línea; una escritura bloqueada por `SoloLectura` deja la suya; `pendientes` → `reanudar` → `pendientes` vacío → segundo `reanudar` rechazado (y el coste hasta la parada); una aprobación resuelta en el mismo proceso no queda pendiente, aunque se borre el registro; el mismo correo dos veces crea un solo pedido; la herramienta devuelve el duplicado como error de datos; contra la API simulada, un pedido existente no provoca ningún `POST`. Con el `cli.py` anterior fallan las tres pruebas que dependen de la CLI.
 
+## 2026-10-18 · Verificación en el sandbox de auditoría, checkpoints e idempotencia
+
+TEST29 (CRONUS ES), `BC_MODO=api`, `AGENTE_SOLO_LECTURA=0`, `gpt-4.1-mini`. La misma secuencia dos veces: `procesar 06_cronus_es_grande.txt --aprobar pendiente` → `pendientes` → `reanudar --decision si --aprobador "Javier" --comentario "OK"` → `pendientes` → segundo `reanudar` del mismo checkpoint. Los pedidos de TEST29 se leyeron por API antes, durante la parada y después.
+
+**A · Referencia TRY-5531, la del pedido 101022 que ya existía (idempotencia contra el ERP real).**
+
+- `procesar` se para en la aprobación (3.781,40 €) e imprime «Coste hasta la parada: … 0.0080 €» (2 llamadas, 2.930 / 263 tokens).
+- `pendientes` muestra solo el checkpoint nuevo (`f6aaec24-…`); ya no aparecen los cinco anteriores.
+- `reanudar` → «Pedido creado: no · Número de pedido: 101022 · No se ha creado un pedido nuevo: Ya existe el pedido 101022 del cliente 20000 con la referencia TRY-5531; no se crea otro». 1 llamada (redactor), 273 / 98 tokens, 0,0013 €.
+- `pendientes` → «No hay aprobaciones pendientes.»; el segundo `reanudar` termina con código 1: «No se reanuda el checkpoint f6aaec24-… La aprobación de este checkpoint ya se resolvió el 2026-10-18T12:25:34…: aprobada por Javier.»
+- En TEST29, el último pedido sigue siendo el 101022: **no se duplicó**. La auditoría registra el intento rechazado: `crear_pedido_venta · escritura_erp · origen: codigo · error: PedidoDuplicado: Ya existe el pedido 101022…`.
+
+**B · Referencia nueva TRY-5532 (`06_cronus_es_grande.txt` cambia a esta referencia).**
+
+- `procesar` se para e imprime «Coste hasta la parada: … 0.0079 €» (2 llamadas, 2.930 / 257 tokens). Durante la parada, el último pedido de TEST29 sigue siendo el 101022.
+- `pendientes` muestra solo el checkpoint nuevo (`8a693c10-…`).
+- `reanudar` crea el **pedido 101023**: Trey Research, 3.781,40 €, referencia TRY-5532, «Aprobado por Javier: OK». 1 llamada, 283 / 97 tokens, 0,0013 €.
+- `pendientes` vacío y segundo `reanudar` rechazado con el mismo mensaje.
+- **La auditoría registra la creación con sus líneas**: `crear_pedido_venta · escritura_erp · origen: codigo · {"number": "101023", "customerNumber": "20000", "externalDocumentNumber": "TRY-5532", "status": "Draft", "totalAmountExcludingTax": 3781.4, "lineas": [{"articulo": "1896-S", "descripcion": "Escritorio ATENAS", "cantidad": 3, "importe": 3017.4}, {"articulo": "1908-S", "descripcion": "Silla giratoria LONDRES, azul", "cantidad": 4, "importe": 764}]}`.
+
+Las comprobaciones de las dos secuencias se cumplieron: coste impreso en la parada, `pendientes` solo con el checkpoint nuevo y luego vacío, segundo `reanudar` rechazado, escritura auditada (creada o rechazada) e idempotencia contra el ERP real.
+
 ## 2026-10-18 · Ejecuciones con el modelo real: llamadas y coste
 
 Azure OpenAI, despliegue `gpt-4.1-mini`, `BC_MODO=demo` (ERP simulado: no se escribió nada real). Las llamadas al modelo salen de las trazas (`ENABLE_CONSOLE_EXPORTERS=1`, spans `chat`); sus tokens cuadran con la línea «Coste» de la CLI. El coste está calculado con las tarifas por defecto del ejemplo (2 € por millón de tokens de entrada y 8 € por millón de salida), no con la tarifa real de Azure.
@@ -223,7 +245,9 @@ Azure OpenAI, despliegue `gpt-4.1-mini`, `BC_MODO=demo` (ERP simulado: no se esc
 | 12 | `procesar 05_cronus_es_pequeno.txt` contra TEST29 | Pedido real 101021 (939,40 €), sin aprobación | 3 | 3.227 / 359 | 0,0093 € |
 | 13 | `procesar 06_cronus_es_grande.txt --aprobar pendiente` contra TEST29 | Se para a pedir aprobación; checkpoint guardado | 2 | 2.930 / 257 | 0,0079 € |
 | 14 | `reanudar --checkpoint 66f533d0-… --decision si` contra TEST29 | Pedido real 101022 (3.781,40 €) | 1 | 283 / 100 | 0,0014 € |
-| | **Total del día** | | **33 + las de la 9** | **34.294 / 2.405** | **≈ 0,0878 €** |
+| 15 | Verificación A: `procesar 06 --aprobar pendiente` + `reanudar` (TRY-5531) | Duplicado detectado: no se crea otro pedido; 101022 devuelto como error de datos | 3 (2 + 1) | 3.203 / 361 | 0,0093 € |
+| 16 | Verificación B: `procesar 06 --aprobar pendiente` + `reanudar` (TRY-5532) | Pedido real 101023 (3.781,40 €) con sus líneas en la auditoría | 3 (2 + 1) | 3.213 / 354 | 0,0093 € |
+| | **Total del día** | | **39 + las de la 9** | **40.710 / 3.120** | **≈ 0,1064 €** |
 
 Observaciones:
 
