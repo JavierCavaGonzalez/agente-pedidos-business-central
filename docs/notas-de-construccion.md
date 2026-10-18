@@ -172,7 +172,7 @@ Sandbox TEST29 (CRONUS ES), `BC_MODO=api`, `AGENTE_SOLO_LECTURA=0`, umbral de ap
 
 **Flujo con aprobación** (`procesar 06_cronus_es_grande.txt --aprobar pendiente`, `pendientes`, `reanudar … --decision si --aprobador "Javier" --comentario "OK"`):
 
-1. `procesar` se para en `aprobacion_humana` (3.781,40 > 3.000) y guarda el checkpoint `66f533d0-11ce-4e95-b80f-0c7d338dbb65`. 2 llamadas al modelo (1.364/76, 1.566/181), 2.930 / 257 tokens, 0,0079 € (calculado con las trazas: en modo `pendiente` la CLI termina sin imprimir el coste).
+1. `procesar` se para en `aprobacion_humana` (3.781,40 > 3.000) y guarda el checkpoint `66f533d0-…`. 2 llamadas al modelo (1.364/76, 1.566/181), 2.930 / 257 tokens, 0,0079 € (calculado con las trazas: en modo `pendiente` la CLI termina sin imprimir el coste).
 2. Pedidos en TEST29 leídos por API antes de procesar, durante la parada y justo antes de reanudar: el último seguía siendo el 101021. **Entre la parada y la reanudación no se creó ningún pedido.**
 3. `reanudar`, en otro proceso: aprobacion_humana → crear_pedido → redactar. **Pedido 101022** creado: Trey Research, 3.781,40 € sin impuestos (Business Central coincide), referencia TRY-5531, estado Draft, «Aprobado por Javier: OK». 1 llamada al modelo (redactor), 283 / 100 tokens, 0,0014 €.
 

@@ -8,7 +8,7 @@ El objetivo no es el pedido: es enseñar **todas las piezas del esqueleto de un 
 |---|---|---|
 | Qué cliente y qué artículos nombra el correo; cómo redactar la respuesta | Si el pedido es válido (cliente no bloqueado, artículos existentes, existencias, crédito), su importe, si hace falta aprobación y qué ruta sigue; la escritura en el ERP | Si se crea un pedido que exige aprobación (importe, dudas, política) |
 
-Funciona **sin ninguna credencial** en modo demo (modelo simulado + Business Central simulado) y se conecta a un **sandbox real** de Business Central con seis variables de entorno.
+Funciona **sin ninguna credencial** en modo demo (modelo simulado + Business Central simulado) y se conecta a un **sandbox real** de Business Central con seis variables de entorno. Se ha probado con Azure OpenAI y contra un sandbox con CRONUS ES; lo que falló por el camino y cómo se corrigió está en [`docs/notas-de-construccion.md`](docs/notas-de-construccion.md).
 
 > Lenguaje: Python. Framework: `agent-framework==1.22.0`. Todo el código usa la API vigente (`Agent`, `AgentSession`, `@tool`, `WorkflowBuilder`, `request_info`, `FileCheckpointStorage`, `configure_otel_providers`), no la de la beta de 2025 (`ChatAgent`, `AgentThread`, `@ai_function`…). Si usas un asistente de código, fíjale la versión: la API cambia cada semana.
 
@@ -93,7 +93,7 @@ Lo que **no** hace el modelo: decidir el importe, decidir si se aprueba, ni escr
 
 ## 4. Requisitos
 
-- Python 3.10 o superior (probado con 3.13).
+- Python 3.10 o superior (probado con 3.13 y 3.14).
 - Para el modo demo: nada más.
 - Para un modelo real: una clave de OpenAI, o un recurso de Azure OpenAI, o un proyecto de Microsoft Foundry (con `azure-identity` y `az login`).
 - Para Business Central real: un **sandbox** de Business Central online y una aplicación registrada en Microsoft Entra ID (ver sección 8).
@@ -191,6 +191,19 @@ BC_COMPANY_NAME=<nombre exacto de la empresa, p. ej. CRONUS ES>
 ```
 
 7. Prueba primero en solo lectura y con el modelo simulado: `AGENTE_SOLO_LECTURA=1 python -m agente_pedidos chat "Empresa: <un cliente de tu sandbox>. Necesito 2 <un artículo>"`. Después, `procesar` con un correo propio.
+8. Si tu sandbox tiene los datos de demostración de **CRONUS ES**, hay dos correos preparados con nombres de clientes y artículos tal como están allí (sin códigos, para que el modelo tenga que buscarlos):
+
+```bash
+# Flujo directo: Adatum Corporation, 939,40 € (por debajo del umbral): se crea sin aprobación.
+python -m agente_pedidos procesar ejemplos/correos/05_cronus_es_pequeno.txt
+
+# Flujo con aprobación: Trey Research, 3.781,40 € (por encima del umbral).
+python -m agente_pedidos procesar ejemplos/correos/06_cronus_es_grande.txt --aprobar pendiente
+python -m agente_pedidos pendientes
+python -m agente_pedidos reanudar --checkpoint <ID> --decision si --aprobador "Ana" --comentario "OK"
+```
+
+**Estos comandos crean pedidos reales en el sandbox.** Antes de crear un pedido, el cliente comprueba si ya existe uno del mismo cliente con la **misma referencia externa** (`ADT-8102`, `TRY-5532`…). Si existe, no crea otro y lo devuelve como error de datos («Ya existe el pedido … con la referencia …»), así que procesar dos veces el mismo correo no duplica el pedido. Para repetir la prueba, cambia la referencia del correo.
 
 Endpoints que usa `cliente_api.py` (todos estándar, sin extensiones AL): `GET companies`, `GET customers` y `GET items` con filtros OData, `GET salesOrders` (¿existe ya un pedido del cliente con esa referencia?), `POST salesOrders` y `POST salesOrders({id})/salesOrderLines`. Las búsquedas filtran por nombre (`contains(displayName,…)`) y, solo si el texto parece un código (`10000`, `1928-S`), hacen una segunda petición por `number eq` y unen los resultados: la API **no admite `or` entre campos distintos** (responde `501 Not Implemented`).
 
@@ -301,6 +314,7 @@ Detalle de cada pieza:
 - **Aprobación**: la pide por consola (sin terminal, se deniega) o la deja en un checkpoint. Llevarla a Teams, Outlook o una página de Business Central es trabajo de la aplicación (el workflow ya expone la petición y la reanudación).
 - **Identidad y gobierno del tenant**: el framework no da Entra Agent ID ni registro en Agent 365 por sí mismo; eso llega al desplegarlo como hosted agent en Microsoft Foundry o con el SDK de Agent 365.
 - **Versiones**: fijado a `agent-framework==1.22.0`. Las versiones posteriores pueden cambiar nombres (ha ocurrido tras la 1.0); revisa `CHANGELOG.md` del repositorio oficial antes de actualizar.
+- **Lo aprendido al probarlo de verdad**: [`docs/notas-de-construccion.md`](docs/notas-de-construccion.md) recoge cada fallo encontrado al pasar del modo demo a un modelo real y a un sandbox de Business Central (lectura de `.env`, prompts, el 501 por `or` entre campos, las rarezas de la API, la auditoría de las escrituras, los checkpoints ya resueltos, la idempotencia), con su causa, la corrección, las pruebas y lo que costó cada ejecución.
 - **Siguientes pasos razonables**: desplegar como hosted agent en Foundry (`azd`), exportar trazas a Application Insights, añadir una suite de evaluación con correos reales anonimizados (desarrollo guiado por evaluación, cap. 10 del libro) y sustituir la entrada por fichero por un buzón real (Microsoft Graph).
 
 ## 14. Para construirlo con Claude Code
