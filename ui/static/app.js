@@ -31,8 +31,11 @@ async function arrancar() {
   ajustarEscala();
   window.addEventListener("resize", ajustarEscala);
   prepararDialogoTarea();
+  await pedirEstado();
   conectar();
   setInterval(refrescarTiempos, 1000);
+  // El backend reenvía el estado cada ~3 s; si en 8 s no ha llegado nada, se pide por HTTP.
+  setInterval(() => Date.now() - ultimoEstado > 8000 && pedirEstado(), 4000);
   // Enlace directo a la ficha de un agente: …/#ficha=pedidos
   const pedida = new URLSearchParams(location.hash.slice(1)).get("ficha");
   if (pedida && refs.mesas.has(pedida)) abrirFicha(pedida);
@@ -48,9 +51,23 @@ const escalaActual = () => parseFloat(getComputedStyle(document.documentElement)
 
 // --- conexión SSE (EventSource reconecta solo) --------------------------------------------------
 
+let ultimoEstado = 0;
+
+/** Foto completa por HTTP: al arrancar, al (re)conectar y si el SSE lleva un rato callado. */
+async function pedirEstado() {
+  try {
+    pintar(await api("/api/estado"));
+  } catch {
+    /* el SSE o el siguiente intento lo resolverán */
+  }
+}
+
 function conectar() {
   const fuente = new EventSource("/api/eventos");
-  fuente.addEventListener("open", () => marcarConexion("conectado", "En directo"));
+  fuente.addEventListener("open", () => {
+    marcarConexion("conectado", "En directo");
+    pedirEstado();
+  });
   fuente.addEventListener("estado", (e) => pintar(JSON.parse(e.data)));
   fuente.addEventListener("evento", (e) => {
     const evento = JSON.parse(e.data);
@@ -70,7 +87,9 @@ function marcarConexion(situacion, texto) {
 // --- pintar el estado ---------------------------------------------------------------------------
 
 function pintar(nuevo) {
+  if (estado && nuevo.ahora < estado.ahora) return; // una foto más antigua que la que ya se ve
   estado = nuevo;
+  ultimoEstado = Date.now();
   const modo = document.getElementById("modo-erp");
   modo.textContent = `ERP: ${nuevo.modo_erp === "api" ? "sandbox real (api)" : "simulado (demo)"}`;
   modo.dataset.modo = nuevo.modo_erp;
