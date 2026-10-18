@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -34,9 +35,19 @@ from agent_framework import (
 
 HERRAMIENTAS_ESCRITURA = ("crear_", "modificar_", "borrar_", "registrar_")
 
+# Herramienta en ejecución. Si durante la llamada el cliente del ERP audita la escritura, lo
+# anota aquí y el middleware no escribe una segunda línea para la misma operación.
+_HERRAMIENTA_EN_CURSO: ContextVar[dict[str, bool] | None] = ContextVar("herramienta_en_curso", default=None)
+
 
 class AuditoriaHerramientas(FunctionMiddleware):
-    """Escribe un registro de auditoría por cada herramienta ejecutada."""
+    """Escribe un registro de auditoría por cada herramienta ejecutada y por cada escritura en el ERP.
+
+    Las escrituras las registra el propio cliente del ERP (``ClienteBC.crear_pedido_venta``) con
+    ``registrar_escritura``, así que dejan rastro tanto si las pide el modelo (``chat``) como si
+    las hace el código del workflow (``procesar``). Cuando la escritura llega a través de una
+    herramienta, esa línea sustituye a la de la herramienta: una operación, una línea.
+    """
 
     def __init__(self, ruta: Path | str | None = None) -> None:
         self.ruta = Path(ruta or os.environ.get("AGENTE_AUDITORIA", "auditoria.jsonl"))
@@ -48,23 +59,56 @@ class AuditoriaHerramientas(FunctionMiddleware):
         if not isinstance(argumentos, dict):
             argumentos = {"valor": str(argumentos)}
         fallo: str | None = None
+        marca = {"auditada_por_el_erp": False}
+        token = _HERRAMIENTA_EN_CURSO.set(marca)
         try:
             await call_next()
         except Exception as error:
             fallo = f"{type(error).__name__}: {error}"
             raise
         finally:
-            # También se registra la herramienta que falla: en un ERP, el intento cuenta tanto como el éxito.
-            evento: dict[str, Any] = {
-                "instante": inicio.isoformat(),
-                "herramienta": context.function.name,
-                "argumentos": argumentos,
-                "resultado": None if fallo else _resumir(context.result),
-                "duracion_ms": int((datetime.now(timezone.utc) - inicio).total_seconds() * 1000),
-            }
-            if fallo:
-                evento["error"] = fallo
-            self.registrar(evento)
+            _HERRAMIENTA_EN_CURSO.reset(token)
+            if not marca["auditada_por_el_erp"]:
+                self._registrar_herramienta(context, inicio, argumentos, fallo)
+
+    def _registrar_herramienta(
+        self, context: FunctionInvocationContext, inicio: datetime, argumentos: dict[str, Any], fallo: str | None
+    ) -> None:
+        # También se registra la herramienta que falla: en un ERP, el intento cuenta tanto como el éxito.
+        evento: dict[str, Any] = {
+            "instante": inicio.isoformat(),
+            "herramienta": context.function.name,
+            "argumentos": argumentos,
+            "resultado": None if fallo else _resumir(context.result),
+            "duracion_ms": int((datetime.now(timezone.utc) - inicio).total_seconds() * 1000),
+        }
+        if fallo:
+            evento["error"] = fallo
+        self.registrar(evento)
+
+    def registrar_escritura(
+        self,
+        operacion: str,
+        argumentos: dict[str, Any],
+        resultado: Any = None,
+        error: str | None = None,
+        duracion_ms: int | None = None,
+    ) -> None:
+        """Registra una escritura en el ERP, la pida una herramienta o el código del workflow."""
+        marca = _HERRAMIENTA_EN_CURSO.get()
+        evento: dict[str, Any] = {
+            "herramienta": operacion,
+            "evento": "escritura_erp",
+            "origen": "herramienta" if marca is not None else "codigo",
+            "argumentos": argumentos,
+            "resultado": None if error else _resumir(resultado),
+            "duracion_ms": duracion_ms,
+        }
+        if error:
+            evento["error"] = error
+        self.registrar(evento)
+        if marca is not None:
+            marca["auditada_por_el_erp"] = True
 
     def registrar(self, evento: dict[str, Any]) -> None:
         """Añade un evento al registro (herramientas y también decisiones como una aprobación denegada)."""

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,7 @@ from agent_framework import (
     FileCheckpointStorage,
     Workflow,
     WorkflowBuilder,
+    WorkflowCheckpoint,
     WorkflowContext,
     WorkflowViz,
     handler,
@@ -44,7 +46,7 @@ from agent_framework import (
 from typing_extensions import Never
 
 from .agentes import crear_agente_interprete, crear_agente_redactor
-from .bc.base import ClienteBC, ErrorBC
+from .bc.base import ClienteBC, ErrorBC, PedidoDuplicado
 from .esquemas import DecisionHumana, LineaInterpretada, LineaValidada, PedidoInterpretado, PedidoValidado, ResultadoPedido
 from .observabilidad import ContadorCoste
 from .politicas import Politica, validar_pedido
@@ -182,6 +184,16 @@ class CrearPedido(Executor):
                 referencia_externa=validado.referencia_cliente or "",
                 fecha_entrega=validado.fecha_entrega,
             )
+        except PedidoDuplicado as duplicado:
+            # Idempotencia: el mismo correo procesado dos veces no crea dos pedidos.
+            return ResultadoPedido(
+                creado=False,
+                numero_pedido=duplicado.pedido.get("number"),
+                total=float(duplicado.pedido.get("totalAmountExcludingTax") or validado.total),
+                numero_cliente=validado.numero_cliente,
+                nombre_cliente=validado.nombre_cliente,
+                mensaje=f"No se ha creado un pedido nuevo: {duplicado}",
+            )
         except ErrorBC as error:
             return ResultadoPedido(
                 creado=False,
@@ -313,6 +325,69 @@ def crear_storage(ruta: str | Path | None = None) -> FileCheckpointStorage:
     carpeta = Path(ruta or "checkpoints")
     carpeta.mkdir(parents=True, exist_ok=True)
     return FileCheckpointStorage(storage_path=carpeta)
+
+
+# --- ciclo de vida de las aprobaciones guardadas -----------------------------------------------
+#
+# Un checkpoint de pausa (con una petición de aprobación abierta) deja de estar pendiente cuando
+# la aprobación se resuelve, en el mismo proceso o con ``reanudar``. Se reconoce de dos formas:
+# 1. está anotado en ``aprobaciones_resueltas.jsonl`` (lo escribe ``marcar_resuelto``: quién,
+#    cuándo y qué decidió); la extensión .jsonl evita que el almacén lo lea como checkpoint;
+# 2. la ejecución ya continuó: hay un checkpoint posterior cuyo ``previous_checkpoint_id`` es
+#    el suyo (cubre también los checkpoints anteriores a este registro).
+
+REGISTRO_RESUELTAS = "aprobaciones_resueltas.jsonl"
+
+
+def _ruta_registro(storage: FileCheckpointStorage) -> Path:
+    return Path(storage.storage_path) / REGISTRO_RESUELTAS
+
+
+def leer_resueltas(storage: FileCheckpointStorage) -> dict[str, dict[str, Any]]:
+    try:
+        lineas = _ruta_registro(storage).read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return {}
+    registros = (json.loads(linea) for linea in lineas if linea.strip())
+    return {r["checkpoint_id"]: r for r in registros}
+
+
+def marcar_resuelto(storage: FileCheckpointStorage, checkpoint_id: str, decision: DecisionHumana) -> None:
+    """Anota que la aprobación de ``checkpoint_id`` ya se resolvió (no vuelve a salir en ``pendientes``)."""
+    registro = {
+        "checkpoint_id": checkpoint_id,
+        "resuelta": datetime.now(timezone.utc).isoformat(),
+        "aprobado": decision.aprobado,
+        "aprobador": decision.aprobador,
+        "comentario": decision.comentario,
+    }
+    with _ruta_registro(storage).open("a", encoding="utf-8") as fichero:
+        fichero.write(json.dumps(registro, ensure_ascii=False) + "\n")
+
+
+async def aprobaciones_pendientes(storage: FileCheckpointStorage) -> list[WorkflowCheckpoint]:
+    """Checkpoints con una aprobación abierta que nadie ha resuelto todavía."""
+    checkpoints = await storage.list_checkpoints(workflow_name=NOMBRE_WORKFLOW)
+    resueltas = leer_resueltas(storage)
+    continuados = {c.previous_checkpoint_id for c in checkpoints if c.previous_checkpoint_id}
+    pendientes = [
+        c for c in checkpoints
+        if c.pending_request_info_events and c.checkpoint_id not in resueltas and c.checkpoint_id not in continuados
+    ]
+    return sorted(pendientes, key=lambda c: c.timestamp)
+
+
+async def motivo_para_no_reanudar(storage: FileCheckpointStorage, checkpoint_id: str) -> str | None:
+    """Por qué no se puede reanudar ``checkpoint_id`` (ya resuelto), o ``None`` si se puede."""
+    resuelta = leer_resueltas(storage).get(checkpoint_id)
+    if resuelta:
+        decision = "aprobada" if resuelta["aprobado"] else "rechazada"
+        quien = resuelta.get("aprobador") or "una persona"
+        return f"La aprobación de este checkpoint ya se resolvió el {resuelta['resuelta']}: {decision} por {quien}."
+    checkpoints = await storage.list_checkpoints(workflow_name=NOMBRE_WORKFLOW)
+    if any(c.previous_checkpoint_id == checkpoint_id for c in checkpoints):
+        return "La ejecución de este checkpoint ya continuó (hay checkpoints posteriores): su aprobación ya se resolvió."
+    return None
 
 
 def dibujar_mermaid(workflow: Workflow) -> str:

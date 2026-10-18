@@ -56,13 +56,15 @@ class ClienteDemo(ClienteBC):
     async def obtener_articulo(self, numero: str) -> dict[str, Any] | None:
         return next((a for a in self.articulos if a["number"] == numero.strip()), None)
 
-    # --- escritura ----------------------------------------------------------------
-    async def crear_pedido_venta(
-        self,
-        numero_cliente: str,
-        lineas: list[dict[str, Any]],
-        referencia_externa: str = "",
-        fecha_entrega: str | None = None,
+    # --- escritura (la idempotencia y la auditoría están en ClienteBC.crear_pedido_venta) ---
+    async def _buscar_pedido_por_referencia(self, numero_cliente: str, referencia_externa: str) -> dict[str, Any] | None:
+        return next(
+            (p for p in self.pedidos if p["customerNumber"] == numero_cliente and p.get("externalDocumentNumber") == referencia_externa),
+            None,
+        )
+
+    async def _crear_pedido_venta(
+        self, numero_cliente: str, lineas: list[dict[str, Any]], referencia_externa: str, fecha_entrega: str | None
     ) -> dict[str, Any]:
         cliente = await self.obtener_cliente(numero_cliente)
         if cliente is None:

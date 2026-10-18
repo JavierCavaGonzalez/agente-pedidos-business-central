@@ -10,6 +10,7 @@ Endpoints usados (todos de la API v2.0 estándar, sin extensiones AL):
 - GET  /companies
 - GET  /companies({id})/customers   (por nombre; y por número si el texto parece un código)
 - GET  /companies({id})/items       (ídem; la API no admite ``or`` entre campos distintos)
+- GET  /companies({id})/salesOrders   (¿existe ya un pedido del cliente con esa referencia?)
 - POST /companies({id})/salesOrders
 - POST /companies({id})/salesOrders({id})/salesOrderLines
 """
@@ -263,20 +264,27 @@ class ClienteApiV2(ClienteBC):
         valores = datos.get("value", [])
         return valores[0] if valores else None
 
-    # --- escritura ----------------------------------------------------------------
-    async def crear_pedido_venta(
-        self,
-        numero_cliente: str,
-        lineas: list[dict[str, Any]],
-        referencia_externa: str = "",
-        fecha_entrega: str | None = None,
+    # --- escritura (la idempotencia y la auditoría están en ClienteBC.crear_pedido_venta) ---
+    async def _buscar_pedido_por_referencia(self, numero_cliente: str, referencia_externa: str) -> dict[str, Any] | None:
+        empresa = await self._ruta_empresa()
+        filtro = f"customerNumber eq '{_escapar_odata(numero_cliente)}' and externalDocumentNumber eq '{_escapar_odata(referencia_externa)}'"
+        datos = await self._peticion(
+            "GET",
+            f"{empresa}/salesOrders",
+            params={"$filter": filtro, "$top": 1, "$select": "id,number,customerNumber,externalDocumentNumber,totalAmountExcludingTax,status"},
+        )
+        valores = datos.get("value", [])
+        return valores[0] if valores else None
+
+    async def _crear_pedido_venta(
+        self, numero_cliente: str, lineas: list[dict[str, Any]], referencia_externa: str, fecha_entrega: str | None
     ) -> dict[str, Any]:
         if not lineas:
             raise ErrorBC("Un pedido necesita al menos una línea")
         empresa = await self._ruta_empresa()
         cabecera: dict[str, Any] = {"customerNumber": numero_cliente}
         if referencia_externa:
-            cabecera["externalDocumentNumber"] = referencia_externa[:35]
+            cabecera["externalDocumentNumber"] = referencia_externa
         if fecha_entrega:
             cabecera["requestedDeliveryDate"] = fecha_entrega
         pedido = await self._peticion("POST", f"{empresa}/salesOrders", json=cabecera)

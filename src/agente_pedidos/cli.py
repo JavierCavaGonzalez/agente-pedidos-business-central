@@ -30,7 +30,14 @@ from .esquemas import DecisionHumana, ResultadoPedido
 from .middleware import AuditoriaHerramientas, PresupuestoLlamadas, SoloLectura
 from .observabilidad import ContadorCoste, configurar_observabilidad
 from .politicas import Politica
-from .workflow import NOMBRE_WORKFLOW, construir_workflow, crear_storage, dibujar_mermaid
+from .workflow import (
+    aprobaciones_pendientes,
+    construir_workflow,
+    crear_storage,
+    dibujar_mermaid,
+    marcar_resuelto,
+    motivo_para_no_reanudar,
+)
 
 CORREOS_DEMO = ["01_pedido_pequeno.txt", "02_pedido_grande.txt", "03_cliente_bloqueado.txt", "04_con_dudas.txt"]
 
@@ -38,14 +45,20 @@ CORREOS_DEMO = ["01_pedido_pequeno.txt", "02_pedido_grande.txt", "03_cliente_blo
 # --- infraestructura común ----------------------------------------------------------------
 
 
-def crear_cliente_bc() -> ClienteBC:
-    """``BC_MODO=demo`` (por defecto) usa datos simulados; ``BC_MODO=api`` usa la API v2.0 de un sandbox."""
+def crear_cliente_bc(auditoria: AuditoriaHerramientas | None = None) -> ClienteBC:
+    """``BC_MODO=demo`` (por defecto) usa datos simulados; ``BC_MODO=api`` usa la API v2.0 de un sandbox.
+
+    Con ``auditoria``, cada escritura en el ERP queda registrada, la pida el modelo o el workflow.
+    """
     modo = os.environ.get("BC_MODO", "demo").strip().lower()
     if modo == "demo":
-        return ClienteDemo()
-    if modo == "api":
-        return ClienteApiV2.desde_entorno()
-    raise SystemExit(f"BC_MODO='{modo}' no es válido (demo | api)")
+        bc: ClienteBC = ClienteDemo()
+    elif modo == "api":
+        bc = ClienteApiV2.desde_entorno()
+    else:
+        raise SystemExit(f"BC_MODO='{modo}' no es válido (demo | api)")
+    bc.auditoria = auditoria
+    return bc
 
 
 def crear_middleware() -> list[Any]:
@@ -116,8 +129,8 @@ def imprimir_resultado(resultado: ResultadoPedido) -> None:
 
 
 async def cmd_procesar(ruta_correo: str, modo_aprobacion: str, aprobador: str) -> int:
-    bc = crear_cliente_bc()
     middleware = crear_middleware()
+    bc = crear_cliente_bc(auditoria=middleware[0])
     storage = crear_storage(os.environ.get("AGENTE_CHECKPOINTS", "checkpoints"))
     piezas = construir_workflow(bc, Politica.desde_entorno(), storage, middleware)
     correo = Path(ruta_correo).read_text(encoding="utf-8")
@@ -140,6 +153,7 @@ async def cmd_procesar(ruta_correo: str, modo_aprobacion: str, aprobador: str) -
         checkpoint = await piezas.workflow.resolve_pause_checkpoint_id([pendiente.request_id])
         if modo_aprobacion == "pendiente":
             print(f"\nLa ejecución queda guardada. Para decidir más tarde:\n  python -m agente_pedidos reanudar --checkpoint {checkpoint} --decision si|no --aprobador \"{aprobador}\"")
+            print("\nCoste hasta la parada:", piezas.contador.resumen())
             await bc.cerrar()
             return 0
         if modo_aprobacion == "preguntar":
@@ -159,6 +173,7 @@ async def cmd_procesar(ruta_correo: str, modo_aprobacion: str, aprobador: str) -
                 print(f"  paso: {evento.executor_id}")
             elif evento.type == "output":
                 salidas.append(evento.data)
+        marcar_resuelto(storage, checkpoint, decision)  # ya no es una aprobación pendiente
 
     for salida in salidas:
         imprimir_resultado(salida)
@@ -169,13 +184,20 @@ async def cmd_procesar(ruta_correo: str, modo_aprobacion: str, aprobador: str) -
 
 
 async def cmd_reanudar(checkpoint_id: str, decision_texto: str, comentario: str, aprobador: str) -> int:
-    bc = crear_cliente_bc()
     storage = crear_storage(os.environ.get("AGENTE_CHECKPOINTS", "checkpoints"))
-    piezas = construir_workflow(bc, Politica.desde_entorno(), storage, crear_middleware())
+    motivo = await motivo_para_no_reanudar(storage, checkpoint_id)
+    if motivo:
+        # Reanudar dos veces la misma aprobación podría crear el pedido dos veces.
+        print(f"No se reanuda el checkpoint {checkpoint_id}. {motivo}")
+        return 1
+    middleware = crear_middleware()
+    bc = crear_cliente_bc(auditoria=middleware[0])
+    piezas = construir_workflow(bc, Politica.desde_entorno(), storage, middleware)
     checkpoint = await storage.load(checkpoint_id)
     pendientes = list(checkpoint.pending_request_info_events.keys())
     if not pendientes:
         print("Ese checkpoint no tiene ninguna aprobación pendiente.")
+        await bc.cerrar()
         return 1
     decision = DecisionHumana(aprobado=decision_texto == "si", comentario=comentario, aprobador=aprobador)
     salidas: list[ResultadoPedido] = []
@@ -184,34 +206,33 @@ async def cmd_reanudar(checkpoint_id: str, decision_texto: str, comentario: str,
             print(f"  paso: {evento.executor_id}")
         elif evento.type == "output":
             salidas.append(evento.data)
+    marcar_resuelto(storage, checkpoint_id, decision)
     for salida in salidas:
         imprimir_resultado(salida)
     print("\nCoste de esta reanudación:", piezas.contador.resumen())
+    print("Auditoría:", middleware[0].ruta)
     await bc.cerrar()
     return 0
 
 
 async def cmd_pendientes() -> int:
     storage = crear_storage(os.environ.get("AGENTE_CHECKPOINTS", "checkpoints"))
-    checkpoints = await storage.list_checkpoints(workflow_name=NOMBRE_WORKFLOW)
-    encontrados = 0
-    for cp in sorted(checkpoints, key=lambda c: c.timestamp):
-        if cp.pending_request_info_events:
-            encontrados += 1
-            print(f"checkpoint {cp.checkpoint_id}  ({cp.timestamp})")
-            for request_id, evento in cp.pending_request_info_events.items():
-                datos = evento.get("data") if isinstance(evento, dict) else getattr(evento, "data", None)
-                resumen = getattr(datos, "resumen", None) or (datos.get("resumen") if isinstance(datos, dict) else "")
-                print(f"  solicitud {request_id}\n    " + str(resumen).replace("\n", "\n    "))
-    if not encontrados:
+    pendientes = await aprobaciones_pendientes(storage)  # sin las ya resueltas
+    for cp in pendientes:
+        print(f"checkpoint {cp.checkpoint_id}  ({cp.timestamp})")
+        for request_id, evento in cp.pending_request_info_events.items():
+            datos = evento.get("data") if isinstance(evento, dict) else getattr(evento, "data", None)
+            resumen = getattr(datos, "resumen", None) or (datos.get("resumen") if isinstance(datos, dict) else "")
+            print(f"  solicitud {request_id}\n    " + str(resumen).replace("\n", "\n    "))
+    if not pendientes:
         print("No hay aprobaciones pendientes.")
     return 0
 
 
 async def cmd_chat(mensaje: str, aprobador: str) -> int:
     """Variante conversacional: aprobación a nivel de agente (approval_mode) en lugar de workflow."""
-    bc = crear_cliente_bc()
     middleware = crear_middleware()
+    bc = crear_cliente_bc(auditoria=middleware[0])
     agente = crear_agente_asistente(bc, middleware)
     sesion = agente.create_session()
     contador = ContadorCoste()
