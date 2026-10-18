@@ -132,7 +132,8 @@ function pintarKpis(foto) {
   const erp = foto.erp || {};
   const kpis = [
     ["Agentes activos", numero(t.agentes_activos), `de ${foto.agentes.length} · ${vacantes} mesas vacantes`, "var(--e-trabajando)"],
-    ["Tareas hoy", numero(foto.tareas.length), `${t.tareas_en_curso} en curso`, "var(--azul-500)"],
+    ["Tareas hoy", numero(foto.tareas.filter((x) => x.clase !== "pregunta").length), `${t.tareas_en_curso} en curso`, "var(--azul-500)"],
+    ["Preguntas hoy", numero(foto.preguntas?.hoy || 0), foto.preguntas?.hoy ? `${coste(foto.preguntas.coste_eur)} en respuestas` : "ninguna", "var(--azul-300)"],
     ["Aprobaciones pendientes", numero(t.aprobaciones_pendientes), t.aprobaciones_pendientes ? `${euros(pendiente)} por aprobar` : "ninguna", "var(--e-esperando)", t.aprobaciones_pendientes > 0],
     ["Escrituras en el ERP hoy", numero(t.escrituras_erp_hoy), `${foto.modo_erp === "api" ? erp.entorno || "sandbox" : "simulación"} · ${erp.bloqueadas_hoy || 0} bloqueadas`, "var(--azul-700)"],
     ["Coste hoy (€)", coste(t.coste_hoy_eur), presupuesto ? `${numero(Math.round((t.coste_hoy_eur / presupuesto) * 1000) / 10)} % de ${euros(presupuesto)}` : "", "var(--oro-marca)"],
@@ -507,6 +508,7 @@ function detalleDe(foto) {
         medida("Coste del día", agente.coste_hoy_eur, presupuesto, `${coste(agente.coste_hoy_eur)} de ${euros(presupuesto)}`),
         el("dl", { class: "ficha-datos" },
           el("dt", {}, "Tareas hoy"), el("dd", {}, numero(agente.tareas_hoy)),
+          el("dt", {}, "Preguntas hoy"), el("dd", {}, numero(agente.preguntas_hoy || 0)),
           el("dt", {}, "Llamadas al modelo"), el("dd", {}, numero(agente.llamadas_modelo_hoy)),
           el("dt", {}, "Aprobaciones pendientes"), el("dd", {}, numero(agente.aprobaciones_pendientes)),
           el("dt", {}, "Última tarea"), el("dd", {}, ultima ? `${horaCorta(ultima.inicio)}, ${estadoCorto(ultima)}` : "—"),

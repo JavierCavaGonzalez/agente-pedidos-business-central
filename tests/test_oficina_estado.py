@@ -129,3 +129,16 @@ def test_los_importes_se_redondean_igual_en_la_cli_el_backend_y_el_navegador():
     assert estado.euros(0.00375, 4) == "0,0038 €" and estado.euros(5875.6) == "5.875,60 €"
     contador = ContadorCoste(precio_entrada_por_millon=1.0, precio_salida_por_millon=0.0, tokens_entrada=3750)
     assert contador.resumen().endswith("coste estimado 0.0038 €")
+
+
+def test_las_preguntas_no_cuentan_como_tareas_ni_como_carga():
+    eventos = INICIO + [
+        ev("tarea_iniciada", 20, tarea="p1", origen="pregunta del director", clase="pregunta", resumen="¿En qué estado…?"),
+        ev("modelo_llamada", 18, tarea="p1", modelo="gpt", tokens_entrada=900, tokens_salida=100, coste_eur=0.0023),
+    ]
+    foto = estado.foto(eventos, AHORA, [], modo_erp="demo", modelo="x")
+    agente_ = foto["agentes"][0]
+    assert (agente_["tareas_hoy"], agente_["preguntas_hoy"], agente_["tareas_en_curso"]) == (1, 1, 1)
+    assert foto["tablero"]["tareas_en_curso"] == 1
+    assert foto["preguntas"] == {"hoy": 1, "coste_eur": pytest.approx(0.0023)}
+    assert {t["id"]: t["clase"] for t in foto["tareas"]} == {"t1": "pedido", "p1": "pregunta"}

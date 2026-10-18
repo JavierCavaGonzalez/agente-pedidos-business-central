@@ -50,6 +50,12 @@ class Tarea:
     resumen: str | None = None
     eventos: list[dict[str, Any]] = field(default_factory=list)
     fin: dict[str, Any] | None = None  # el evento tarea_terminada
+    clase: str = "pedido"  # "pedido" o "pregunta"
+
+    @property
+    def es_pregunta(self) -> bool:
+        """Una pregunta al agente (comando ``chat``): no cuenta como tarea ni como carga."""
+        return self.clase == "pregunta"
 
     @property
     def abierta(self) -> bool:
@@ -78,6 +84,7 @@ class Tarea:
         return {
             "id": self.id,
             "agente": self.agente,
+            "clase": self.clase,
             "origen": self.origen,
             "resumen": self.resumen,
             "inicio": self.inicio,
@@ -102,6 +109,7 @@ def agrupar_tareas(eventos: list[dict[str, Any]]) -> dict[str, Tarea]:
             tarea.inicio = evento["ts"]
             tarea.origen = evento["datos"].get("origen")
             tarea.resumen = evento["datos"].get("resumen")
+            tarea.clase = evento["datos"].get("clase") or "pedido"
         elif evento["tipo"] == "tarea_terminada":
             tarea.fin = evento
     return tareas
@@ -115,6 +123,7 @@ _HERRAMIENTAS = {
     "buscar_articulos": "Buscando artículo «{texto}»",
     "obtener_articulo": "Consultando el artículo {numero}",
     "crear_pedido_venta": "Creando el pedido para el cliente {numero_cliente}",
+    "estado_oficina": "Consultando el estado de la oficina",
 }
 
 
@@ -220,7 +229,8 @@ def estado_agentes(
                 "bocadillo": bocadillo(actual) if actual else None,
                 "resultado_reciente": _resultado_reciente(actual, ahora),
                 "aprobaciones_pendientes": pendientes_por_agente.get(agente["id"], 0),
-                "tareas_hoy": len(suyas),
+                "tareas_hoy": sum(1 for t in suyas if not t.es_pregunta),
+                "preguntas_hoy": sum(1 for t in suyas if t.es_pregunta),
                 "coste_hoy_eur": round(sum(e["datos"].get("coste_eur", 0) for e in eventos if e["agente"] == agente["id"] and e["tipo"] == "modelo_llamada"), 6),
             }
         )
@@ -250,7 +260,7 @@ def tablero(eventos: list[dict[str, Any]], agentes: list[dict[str, Any]], aproba
     tareas = agrupar_tareas(eventos)
     return {
         "agentes_activos": sum(1 for a in agentes if a["estado"] in ("trabajando", "esperando_aprobacion", "error")),
-        "tareas_en_curso": sum(1 for t in tareas.values() if t.abierta),
+        "tareas_en_curso": sum(1 for t in tareas.values() if t.abierta and not t.es_pregunta),
         "aprobaciones_pendientes": aprobaciones_pendientes,
         "escrituras_erp_hoy": sum(1 for e in eventos if e["tipo"] == "erp_escritura"),
         "coste_hoy_eur": round(sum(e["datos"].get("coste_eur", 0) for e in eventos if e["tipo"] == "modelo_llamada"), 6),
@@ -288,7 +298,7 @@ def foto(
     for agente in agentes:
         suyos = [e for e in eventos_hoy if e["agente"] == agente["id"]]
         agente["herramientas"] = herramientas(suyos)
-        agente["tareas_en_curso"] = sum(1 for t in grupos.values() if t.agente == agente["id"] and t.abierta)
+        agente["tareas_en_curso"] = sum(1 for t in grupos.values() if t.agente == agente["id"] and t.abierta and not t.es_pregunta)
         agente["capacidad"] = CAPACIDAD_POR_AGENTE
         agente["llamadas_modelo_hoy"] = sum(1 for e in suyos if e["tipo"] == "modelo_llamada")
         agente["pedidos_hoy"] = [p for p in pedidos if p["agente"] == agente["id"]]
@@ -310,6 +320,11 @@ def foto(
             "ultima_escritura": {"ts": escrituras[-1]["ts"], "pedido": escrituras[-1]["datos"].get("pedido")} if escrituras else None,
         },
         "presupuesto_dia_eur": presupuesto_dia_eur,
+        # Las preguntas al agente van aparte: no son tareas ni cuentan en la carga
+        "preguntas": {
+            "hoy": sum(1 for t in grupos.values() if t.es_pregunta),
+            "coste_eur": round(sum(t.coste() for t in grupos.values() if t.es_pregunta), 6),
+        },
     }
 
 

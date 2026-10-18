@@ -220,7 +220,7 @@ h1, h2, h3 { margin: 0; }
 .kpis {
   min-height: 106px; /* reservado antes de que lleguen los datos: la escena no cambia de tamaño */
   flex-shrink: 0;
-  display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px;
+  display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 1px;
   background: var(--c-borde); border-bottom: 1px solid var(--c-borde);
 }
 .kpi { background: var(--c-superficie); padding: var(--e-15) var(--e-3) var(--e-15); min-width: 0; }
