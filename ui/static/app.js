@@ -90,7 +90,20 @@ function pintar(foto) {
 const nombreAgente = (id) => estado?.agentes.find((a) => a.id === id)?.nombre || id;
 const aprobador = () => leerPreferencia("aprobador", "Director");
 const coincide = (...textos) => !busqueda || textos.some((t) => String(t ?? "").toLowerCase().includes(busqueda));
-const recortar = (texto, n) => (texto && texto.length > n ? `${texto.slice(0, n - 1)}…` : texto);
+const horaCorta = (ts) => (ts ? new Date(ts).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : "—");
+const sinExtension = (nombre) => String(nombre || "").replace(/\.txt$/, "");
+const ESTADO_CORTO = { en_curso: "en curso", esperando_aprobacion: "esperando", error: "error", creado: "creado", rechazado: "rechazado", denegado: "denegado", respondido: "respondida" };
+const estadoCorto = (t) => ESTADO_CORTO[t.estado === "terminada" ? t.resultado : t.estado] || t.resultado || t.estado;
+
+/** Lo que dice la segunda línea de la etiqueta del agente, sin repetir el dato de la primera (y sin recortar). */
+function subDeAgente(agente, foto) {
+  if (agente.resultado_reciente || !["trabajando", "esperando_aprobacion", "error"].includes(agente.estado)) return null;
+  if (agente.estado === "esperando_aprobacion") {
+    const suya = foto.aprobaciones.find((a) => a.agente === agente.id);
+    return suya ? `Pedido de ${suya.cliente.replace(/^\S+\s/, "")}` : null;
+  }
+  return agente.bocadillo;
+}
 
 function pintarBarra(foto) {
   const erp = foto.erp || {};
@@ -174,7 +187,7 @@ function pintarEscena(foto) {
       estado: a.estado,
       nombre: a.nombre,
       dato: datoDeAgente(a, foto),
-      sub: ["trabajando", "esperando_aprobacion", "error"].includes(a.estado) && !a.resultado_reciente ? recortar(a.bocadillo, 52) : null,
+      sub: subDeAgente(a, foto),
     })),
     vacantes: config.mesas.filter((m) => !m.agente).map((m) => ({ id: m.id, area: m.vacante })),
     director: { nombre: aprobador(), dato: n ? `${n} ${n === 1 ? "aprobación pendiente" : "aprobaciones pendientes"}` : "Despacho del director", pendientes: n },
@@ -272,7 +285,7 @@ function pintarSeguimiento(foto) {
     ["", "La más urgente"],
     ...foto.tareas
       .filter((t) => coincide(t.origen, t.resumen, t.pedido, t.id, t.seguimiento?.cliente))
-      .map((t) => [t.id, `${hora(t.inicio)} · ${t.origen || t.id} · ${t.estado === "terminada" ? RESULTADOS[t.resultado] || t.resultado : ESTADO_TAREA[t.estado]}`]),
+      .map((t) => [t.id, `${horaCorta(t.inicio)} · ${sinExtension(t.origen) || t.id} · ${estadoCorto(t)}`]),
   ];
   const firmaOpciones = JSON.stringify(opciones);
   if (selector.dataset.firma !== firmaOpciones) {
@@ -312,10 +325,9 @@ function pintarSeguimiento(foto) {
     el("div", { class: "cabeza" }, el("strong", {}, s.cliente || tarea.origen || "Pedido"), el("span", {}, s.total != null ? euros(s.total) : "")),
     lineas.length
       ? el("table", { class: "tabla tabla-lineas" },
-          el("thead", {}, el("tr", {}, el("th", {}, "Artículo"), el("th", { class: "num" }, "Cantidad"), el("th", { class: "num" }, "Importe"))),
+          el("thead", {}, el("tr", {}, el("th", {}, "Cantidad y artículo"), el("th", { class: "num" }, "Importe"))),
           el("tbody", {}, lineas.map((l) => el("tr", {},
-            el("td", { class: "cliente" }, [l.articulo, l.descripcion].filter(Boolean).join(" · ")),
-            el("td", { class: "num" }, l.cantidad != null ? numero(l.cantidad) : ""),
+            el("td", { class: "cliente" }, [l.cantidad != null ? `${numero(l.cantidad)} ×` : null, l.articulo, l.descripcion].filter(Boolean).join(" ")),
             el("td", { class: "num" }, l.importe != null ? euros(l.importe) : ""),
           ))))
       : el("p", { class: "vacio" }, tarea.estado === "terminada" ? "Sin líneas validadas." : "Las líneas aparecen cuando el agente valida el pedido."),
@@ -337,7 +349,7 @@ function tarjetaAprobacion(a, foto) {
   if (existente) return existente;
   const campoAprobador = el("input", { type: "text", maxlength: "80", value: aprobador(), "aria-label": "Aprobador", autocomplete: "off", title: "Aprobador: queda en la auditoría tal como se escribe" });
   campoAprobador.addEventListener("change", () => guardarPreferencia("aprobador", campoAprobador.value.trim() || "Director"));
-  const comentario = el("input", { type: "text", maxlength: "500", placeholder: "Comentario (opcional)", "aria-label": "Comentario" });
+  const comentario = el("input", { type: "text", maxlength: "500", placeholder: "Comentario", "aria-label": "Comentario (opcional)", title: "Comentario opcional: queda en la auditoría" });
   const situacion = el("p", { class: "situacion", role: "status" });
   const responder = async (decision) => {
     botones.forEach((b) => (b.disabled = true));
@@ -367,10 +379,8 @@ function tarjetaAprobacion(a, foto) {
     situacion.textContent = `Se pidió con el ERP ${a.modo_erp === "api" ? "real (api)" : "simulado (demo)"}: arranca la oficina en ese modo para resolverla.`;
   }
   const tarjeta = el("article", { class: "tarjeta-aprobacion", "aria-label": `Aprobación pendiente: ${a.cliente}` },
-    el("h3", {}, icono("mano"), "Aprobación necesaria"),
-    el("div", { class: "fila" },
-      el("div", { class: "cliente" }, a.cliente, a.referencia ? el("span", { class: "pastilla", style: "margin-left:8px" }, `ref. ${a.referencia}`) : null),
-      el("div", { class: "importe" }, euros(a.importe))),
+    el("div", { class: "fila" }, el("h3", {}, icono("mano"), "Aprobación necesaria"), el("div", { class: "importe" }, euros(a.importe))),
+    el("div", { class: "cliente" }, a.cliente, a.referencia ? el("span", { class: "pastilla", style: "margin-left:8px" }, `ref. ${a.referencia}`) : null),
     el("p", { class: "motivo" }, a.motivo || ""),
     el("div", { class: "campos" }, campoAprobador, comentario, ...botones),
     situacion,
@@ -393,7 +403,7 @@ function pintarPedidos(foto) {
           el("td", { class: "cliente", title: p.cliente || "" }, p.cliente || "—"),
           el("td", { class: "num" }, euros(p.importe)),
           el("td", {}, el("span", { class: "pastilla" }, p.estado_bc)),
-          el("td", {}, hora(p.ts)),
+          el("td", { class: "col-hora" }, horaCorta(p.ts)),
           el("td", {}, p.enlace
             ? el("a", { href: p.enlace, target: "_blank", rel: "noopener", onclick: (e) => e.stopPropagation() }, "Abrir en Business Central ↗")
             : el("span", { class: "simulacion", title: "Pedido de la simulación: no existe en Business Central" }, "simulación")),
@@ -494,12 +504,12 @@ function detalleDe(foto) {
         ),
         agente.bocadillo ? el("p", { class: "detalle-bocadillo" }, agente.bocadillo) : null,
         medida("Carga", agente.tareas_en_curso, agente.capacidad, `${agente.tareas_en_curso} de ${agente.capacidad} tareas`),
-        medida("Coste hoy frente al presupuesto", agente.coste_hoy_eur, presupuesto, `${coste(agente.coste_hoy_eur)} de ${euros(presupuesto)}`),
+        medida("Coste del día", agente.coste_hoy_eur, presupuesto, `${coste(agente.coste_hoy_eur)} de ${euros(presupuesto)}`),
         el("dl", { class: "ficha-datos" },
           el("dt", {}, "Tareas hoy"), el("dd", {}, numero(agente.tareas_hoy)),
           el("dt", {}, "Llamadas al modelo"), el("dd", {}, numero(agente.llamadas_modelo_hoy)),
           el("dt", {}, "Aprobaciones pendientes"), el("dd", {}, numero(agente.aprobaciones_pendientes)),
-          el("dt", {}, "Última ejecución"), el("dd", {}, ultima ? `${hora(ultima.inicio)} · ${ultima.estado === "terminada" ? RESULTADOS[ultima.resultado] || ultima.resultado : ESTADO_TAREA[ultima.estado]}` : "—"),
+          el("dt", {}, "Última tarea"), el("dd", {}, ultima ? `${horaCorta(ultima.inicio)}, ${estadoCorto(ultima)}` : "—"),
         ),
         el("div", {}, el("h3", {}, "Herramientas"),
           agente.herramientas.length

@@ -224,9 +224,9 @@ h1, h2, h3 { margin: 0; }
   background: var(--c-borde); border-bottom: 1px solid var(--c-borde);
 }
 .kpi { background: var(--c-superficie); padding: var(--e-15) var(--e-3) var(--e-15); min-width: 0; }
-.kpi-etiqueta { display: flex; align-items: center; gap: 8px; color: var(--c-texto-3); font-size: var(--t-xs); font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi-etiqueta { display: flex; align-items: center; gap: 8px; color: var(--c-texto-2); font-size: var(--t-xs); font-weight: 650; line-height: 1.3; }
 .kpi-valor { font: 720 var(--t-dato)/1.05 var(--f-titular); letter-spacing: -0.005em; margin-top: 4px; color: var(--c-texto); }
-.kpi-nota { color: var(--c-texto-3); font-size: var(--t-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi-nota { color: var(--c-texto-3); font-size: var(--t-xs); line-height: 1.35; }
 .kpi[data-alerta='true'] { box-shadow: var(--linea-elegido); }
 .kpi[data-alerta='true'] .kpi-valor { color: var(--e-esperando-texto); }
 .kpi-valor.cambio { animation: cambio var(--dur-3) var(--curva); }
@@ -295,7 +295,7 @@ h1, h2, h3 { margin: 0; }
 
 /* Etiquetas flotantes (CSS2DRenderer): punto de estado + nombre + dato clave, ancladas a cada zona */
 .etiqueta {
-  display: flex; flex-direction: column; gap: 1px;
+  display: flex; flex-direction: column; gap: 2px;
   padding: 4px 10px 5px; max-width: 300px;
   background: rgba(255, 255, 255, 0.94); border: 1px solid var(--c-borde);
   box-shadow: 0 8px 18px -10px rgba(8, 26, 48, 0.35);
@@ -305,15 +305,15 @@ h1, h2, h3 { margin: 0; }
 }
 .etiqueta:hover { border-color: var(--c-borde-fuerte); }
 .etiqueta[data-elegido='true'] { box-shadow: 0 8px 18px -10px rgba(8, 26, 48, 0.35), var(--linea-elegido); border-color: var(--c-borde-fuerte); }
-.etiqueta-linea { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; font-weight: 650; }
+.etiqueta-linea { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; font-weight: 650; white-space: nowrap; }
 .etiqueta-dato { color: var(--c-texto-2); font-weight: 400; }
-.etiqueta-sub { font-size: 0.6875rem; color: var(--c-texto-3); overflow: hidden; text-overflow: ellipsis; max-width: 236px; padding-left: 16px; }
+.etiqueta-sub { font-size: 0.6875rem; line-height: 1.35; color: var(--c-texto-2); white-space: normal; max-width: 250px; padding-left: 15px; }
 .etiqueta[data-estado='esperando_aprobacion'] { border-color: var(--e-esperando); }
 .etiqueta[data-estado='esperando_aprobacion'] .etiqueta-dato { color: var(--e-esperando-texto); font-weight: 650; }
 .etiqueta[data-estado='error'] { border-color: var(--e-error); }
-.etiqueta[data-tipo='vacante'] { background: rgba(255, 255, 255, 0.7); color: var(--c-texto-3); border-style: dashed; }
-.etiqueta[data-tipo='zona'] { background: transparent; border: 0; box-shadow: none; padding: 0; cursor: default; }
-.etiqueta[data-tipo='zona'] .etiqueta-linea { font-weight: 650; color: var(--c-texto-3); font-size: 0.75rem; }
+.etiqueta[data-tipo='vacante'] { background: rgba(255, 255, 255, 0.94); color: var(--c-texto-2); border: 1px dashed var(--c-borde-fuerte); box-shadow: none; }
+.etiqueta[data-tipo='zona'] { background: rgba(255, 255, 255, 0.9); border: 0; box-shadow: none; padding: 2px 8px; cursor: default; }
+.etiqueta[data-tipo='zona'] .etiqueta-linea { font-weight: 650; color: var(--c-texto-2); font-size: 0.6875rem; }
 .etiqueta[data-tipo='bc'] img { width: 16px; height: 16px; }
 .etiqueta[data-tipo='director'] .contador { background: var(--e-esperando); color: var(--marino-950); border-radius: var(--r-pastilla); padding: 0 7px; font-size: 0.75rem; }
 .etiqueta-pulso { position: relative; }
@@ -364,16 +364,19 @@ h1, h2, h3 { margin: 0; }
 .paso .nota-paso { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .seguimiento-detalle { display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); gap: var(--e-2); padding: 0 var(--e-2) var(--e-2); }
 .seguimiento-detalle.sin-tarjeta { grid-template-columns: 1fr; }
-.seguimiento-resumen { min-width: 0; }
+.seguimiento-resumen { min-width: 0; overflow-wrap: anywhere; }
+.tabla-lineas { table-layout: fixed; }
+.tabla-lineas th.num, .tabla-lineas td.num { width: 6.5em; }
 .seguimiento-resumen .cabeza { display: flex; justify-content: space-between; gap: var(--e-1); font-size: var(--t-xs); margin-bottom: 4px; }
 .seguimiento-resumen .cabeza strong { font-size: var(--t-sm); }
+.seguimiento-resumen .cabeza span { white-space: nowrap; }
 .seguimiento-resumen .pie { display: flex; justify-content: space-between; margin-top: 6px; font-size: var(--t-xs); color: var(--c-texto-3); }
 
 /* Tarjeta de aprobación (dentro del seguimiento) */
 .tarjeta-aprobacion { border: 1px solid var(--e-esperando); box-shadow: inset 0 3px 0 var(--e-esperando); background: var(--c-superficie); padding: 10px var(--e-15) var(--e-15); display: flex; flex-direction: column; gap: 6px; min-width: 0; align-self: start; }
 .tarjeta-aprobacion h3 { display: flex; align-items: center; gap: 8px; font: 650 var(--t-xs)/1.4 var(--f-texto); color: var(--e-esperando-texto); }
 .tarjeta-aprobacion .importe { font: 720 1.75rem/1 var(--f-titular); white-space: nowrap; }
-.tarjeta-aprobacion .fila { display: flex; align-items: baseline; justify-content: space-between; gap: var(--e-1); }
+.tarjeta-aprobacion .fila { display: flex; align-items: center; justify-content: space-between; gap: var(--e-1); }
 .tarjeta-aprobacion .cliente { font-weight: 650; }
 .tarjeta-aprobacion .motivo { margin: 0; font-size: var(--t-xs); color: var(--c-texto-2); }
 .tarjeta-aprobacion .campos { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr) auto auto; gap: 6px; }
@@ -386,7 +389,7 @@ h1, h2, h3 { margin: 0; }
 .tabla { width: 100%; border-collapse: collapse; font-size: var(--t-xs); }
 .tabla th { position: sticky; top: 0; background: var(--c-superficie); text-align: left; font-weight: 650; color: var(--c-texto-3); padding: 8px 10px 6px; white-space: nowrap; border-bottom: 1px solid var(--c-borde); }
 .tabla td { padding: 8px 10px; border-bottom: 1px solid var(--c-superficie-2); white-space: nowrap; }
-.tabla td.cliente { max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
+.tabla td.cliente { white-space: normal; min-width: 120px; }
 .tabla-lineas td.cliente { max-width: none; white-space: normal; }
 .tabla .num { text-align: right; }
 .tabla tr[data-elegido='true'] td { background: var(--c-tinte-azul); }
@@ -445,10 +448,37 @@ body.inmersivo .salir-inmersivo { display: inline-flex; }
 .etiqueta:not([data-tipo='zona']) { margin-bottom: 14px; position: relative; }
 .etiqueta:not([data-tipo='zona'])::after { content: ''; position: absolute; left: 50%; bottom: -15px; width: 1px; height: 14px; background: var(--c-borde-fuerte); }
 
-/* Pantallas bajas (menos de 920 px de alto): la página se desplaza y cada panel conserva un alto que se lee bien */
+/* Pantallas bajas (menos de 920 px de alto, 1280 × 800 incluido): todo se compacta y la página no se desplaza */
 @media (max-height: 920px) and (min-width: 1280px) {
-  body { height: auto; }
-  .torre { grid-template-rows: 470px minmax(330px, auto); }
+  :root { --alto-barra: 52px; }
+  .barra { gap: var(--e-15); padding: 0 var(--e-2); }
+  .marca img { width: 26px; height: 26px; }
+  .buscador input, .barra .boton { min-height: 34px; height: 34px; }
+  .kpis { min-height: 74px; }
+  .kpi { padding: 6px var(--e-2) 7px; }
+  .kpi-valor { font-size: 1.6rem; margin-top: 0; }
+  .kpi-nota, .kpi-etiqueta { font-size: 0.75rem; }
+  .torre { grid-template-rows: minmax(270px, 1fr) 292px; }
+  .panel-cabecera { min-height: 42px; padding: 6px var(--e-2); }
+  .panel-cabecera h2 { font-size: var(--t-sm); }
+  .segmentos { margin: 8px var(--e-2) 4px; }
+  .feed-item { padding: 6px var(--e-2); }
+  .feed-acciones { padding: 8px var(--e-2); }
+  .pasos { padding: 8px var(--e-2) 4px; }
+  .paso { font-size: 0.6875rem; }
+  .seguimiento-detalle { gap: var(--e-15); padding-bottom: var(--e-1); }
+  .tarjeta-aprobacion { gap: 4px; padding: 8px var(--e-15) 10px; }
+  .tarjeta-aprobacion .importe { font-size: 1.5rem; }
+  .tarjeta-aprobacion input, .tarjeta-aprobacion .boton { height: 32px; min-height: 32px; }
+  .detalle-cuerpo { gap: var(--e-15); padding: var(--e-15) var(--e-2); }
+  .detalle-titulo h2 { font-size: 1.5rem; }
+  .tabla td, .tabla th { padding: 6px 8px; }
+}
+/* Columnas estrechas: la tarjeta de aprobación pone los campos y los botones en dos filas; la hora del pedido se oculta */
+@media (max-width: 1500px) {
+  .tarjeta-aprobacion .campos { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .seguimiento-detalle { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); }
+  .col-hora { display: none; }
 }
 /* Escena estrecha: etiquetas de una sola línea para que no se pisen */
 .escena { container-type: size; }
